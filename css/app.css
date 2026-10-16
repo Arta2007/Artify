@@ -686,3 +686,34 @@ textarea.input { resize: none; font-family: inherit; line-height: 1.4; }
 .add-tip .ic { width: 18px; height: 18px; color: var(--accent); margin-top: 1px; }
 .np-foot .icon-btn { width: 40px; }
 .screen-info { font-size: 11px; opacity: .7; }
+
+/* ---------- multi-select ---------- */
+
+#selbar { margin: 0 8px 8px; padding: 6px 6px 8px; border-radius: 14px; background: var(--surface-3); box-shadow: 0 -4px 24px rgba(0, 0, 0, .5); }
+.sel-top { display: flex; align-items: center; gap: 6px; padding-right: 6px; }
+.sel-top b { flex: 1; font-size: 15px; }
+.sel-top .icon-btn { color: #fff; }
+.sel-acts { display: flex; justify-content: space-around; }
+.sel-acts.off { opacity: .35; pointer-events: none; }
+.sel-acts button { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 10.5px; color: var(--sub); padding: 4px 2px; min-width: 44px; }
+.sel-acts button .ic { width: 22px; height: 22px; color: #fff; }
+.sel-acts button.danger, .sel-acts button.danger .ic { color: var(--danger); }
+body.selecting #mini { display: none !important; }
+body.selecting #view .song { padding-left: 52px; position: relative; }
+body.selecting #view .song::before { content: ''; position: absolute; left: 16px; top: 50%; width: 22px; height: 22px; margin-top: -11px; border-radius: 50%; border: 2px solid #8a8a8a; box-sizing: border-box; }
+body.selecting #view .song.sel::before { border-color: var(--accent); background: var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7'/%3E%3C/svg%3E") center / 14px no-repeat; }
+body.selecting #view .song.sel { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+body.selecting #view .song [data-act="song-menu"] { visibility: hidden; }
+body.selecting #view { padding-bottom: calc(var(--tabs-h) + 150px + var(--tab-pb)); }
+
+/* ---------- lyrics finder ---------- */
+
+.lrc-res { padding-left: 2px; padding-right: 0; }
+.lrc-head { padding: 0 0 10px; }
+.lrc-head b { display: block; font-size: 16px; }
+.lrc-head small { color: var(--sub); font-size: 12.5px; }
+.lrc-preview { max-height: 230px; overflow-y: auto; background: var(--surface); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; scrollbar-width: none; }
+.lrc-preview p { margin: 0 0 8px; font-size: 16px; font-weight: 700; color: rgba(255, 255, 255, .55); transition: color .2s; }
+.lrc-preview p.on { color: #fff; }
+.lrc-preview p span { display: inline-block; min-width: 40px; font-size: 11px; font-weight: 600; color: var(--accent); margin-right: 6px; font-variant-numeric: tabular-nums; }
+.lrc-preview p.more { color: var(--sub); font-weight: 400; }

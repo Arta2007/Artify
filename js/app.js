@@ -654,6 +654,7 @@ function render() {
   view.scrollTop = top.scroll || 0;
   hydrate(view);
   AFTER[top.v]?.(top);
+  if (SEL) (SEL.view === top ? syncSelection() : endSelect());
   for (const b of $$('#tabs button')) b.classList.toggle('on', b.dataset.tab === S.tab);
   onScroll();
   syncPlayState();
@@ -759,8 +760,124 @@ function sfBar(key, pref, { label, isPlaylist = false, canReorder = false }) {
     <label class="sf-find">${icon('search')}<input data-find-in placeholder="Find in ${esc(label)}" autocomplete="off" autocorrect="off" spellcheck="false"></label>
     <button class="chip sm" data-act="sf-sort" data-key="${esc(key)}" data-pl="${isPlaylist ? 1 : ''}">${icon('sort')}${esc(sortLabel(pref, isPlaylist))}</button>
     <button class="chip sm${n ? ' on' : ''}" data-act="sf-filter" data-key="${esc(key)}">${icon('filter')}Filter${n ? ` · ${n}` : ''}</button>
+    <button class="chip sm" data-act="sel-start">${icon('check')}Select</button>
     ${canReorder ? `<button class="chip sm" data-act="pl-reorder">${icon('queue')}Edit order</button>` : ''}
   </div>`;
+}
+
+// ---------- multi-select (tick several songs, act on all of them) ----------
+
+let SEL = null; // { ids: Set, view: stack entry it belongs to }
+const selecting = () => !!SEL && SEL.view === topOf();
+
+function startSelect(firstId) {
+  SEL = { ids: new Set(firstId ? [firstId] : []), view: topOf() };
+  document.body.classList.add('selecting');
+  syncSelection();
+}
+
+function endSelect() {
+  SEL = null;
+  document.body.classList.remove('selecting');
+  $$('#view .song.sel').forEach(r => r.classList.remove('sel'));
+  $('#selbar').hidden = true;
+}
+
+function toggleSel(id) {
+  if (!SEL) return;
+  SEL.ids.has(id) ? SEL.ids.delete(id) : SEL.ids.add(id);
+  syncSelection();
+}
+
+/** Rows that can be selected in the current page, in their on-screen order. */
+const selectableIds = () => [...new Set($$('#view .song[data-tid]:not([hidden])').map(r => r.dataset.tid))];
+
+function syncSelection() {
+  if (!selecting()) { if (SEL) endSelect(); return; }
+  for (const r of $$('#view .song[data-tid]')) r.classList.toggle('sel', SEL.ids.has(r.dataset.tid));
+  const n = SEL.ids.size;
+  const all = selectableIds();
+  const p = topOf().v === 'playlist' ? S.playlists.get(topOf().id) : null;
+  const bar = $('#selbar');
+  bar.hidden = false;
+  bar.innerHTML = `<div class="sel-top"><button class="icon-btn" data-act="sel-done" aria-label="Done">${icon('close')}</button>
+      <b>${n ? plural(n, 'song') + ' selected' : 'Select songs'}</b>
+      <button class="chip sm" data-act="sel-all">${n === all.length && n ? 'Clear' : 'Select all'}</button></div>
+    <div class="sel-acts${n ? '' : ' off'}">
+      <button data-act="sel-do" data-do="playlist">${icon('playlist-add')}<span>Playlist</span></button>
+      <button data-act="sel-do" data-do="queue">${icon('playnext')}<span>Queue</span></button>
+      <button data-act="sel-do" data-do="like">${icon('heart')}<span>Like</span></button>
+      <button data-act="sel-do" data-do="edit">${icon('edit')}<span>Edit</span></button>
+      <button data-act="sel-do" data-do="share">${icon('share')}<span>Save</span></button>
+      ${isEditable(p) ? `<button data-act="sel-do" data-do="remove">${icon('close')}<span>Remove</span></button>` : ''}
+      <button data-act="sel-do" data-do="delete" class="danger">${icon('trash')}<span>Delete</span></button>
+    </div>`;
+}
+
+function selAction(what) {
+  if (!SEL?.ids.size) return;
+  const ids = selectableIds().filter(id => SEL.ids.has(id)); // keep on-screen order
+  const tracks = ids.map(id => S.tracks.get(id)).filter(Boolean);
+  const n = tracks.length;
+  const done = () => endSelect();
+  switch (what) {
+    case 'playlist': addToPlaylistSheet(ids); done(); break;
+    case 'queue':
+      menu(`<div class="sheet-title">${plural(n, 'song')}</div>`, [
+        { icon: 'play', label: 'Play now', run: () => { startQueue(ids, 0, null); done(); } },
+        { icon: 'playnext', label: 'Play next', run: () => { playNext(ids); done(); } },
+        { icon: 'addqueue', label: 'Add to queue', run: () => { addToQueue(ids); done(); } },
+      ]);
+      break;
+    case 'like': {
+      const like = !tracks.every(t => t.liked);
+      for (const t of tracks) { t.liked = like; t.likedAt = Date.now(); db.put('tracks', t); }
+      D = null;
+      toast(like ? `Liked ${plural(n, 'song')}` : `Removed ${plural(n, 'song')} from Liked Songs`);
+      done();
+      updatePlayerUI();
+      refresh();
+      break;
+    }
+    case 'edit': editSheet(tracks); done(); break;
+    case 'share': exportTracks(tracks); done(); break;
+    case 'remove': {
+      const p = S.playlists.get(topOf().id);
+      if (!isEditable(p)) return;
+      const gone = new Set(ids);
+      p.items = p.items.filter(it => !gone.has(it.trackId));
+      p.updated = Date.now();
+      db.put('playlists', p);
+      toast(`Removed ${plural(n, 'song')} from ${p.name}`);
+      done();
+      refresh();
+      break;
+    }
+    case 'delete': deleteTracks(ids, plural(n, 'song')); done(); break;
+  }
+}
+
+// Press and hold a song to start selecting.
+function bindLongPress() {
+  const view = $('#view');
+  let timer = null;
+  let start = null;
+  view.addEventListener('pointerdown', e => {
+    const row = e.target.closest('.song[data-tid]');
+    if (!row || e.target.closest('button, [data-drag]') || row.classList.contains('reorder') || selecting()) return;
+    start = { x: e.clientX, y: e.clientY };
+    timer = setTimeout(() => {
+      timer = null;
+      startSelect(row.dataset.tid);
+      view.dataset.suppressClick = '1';
+      navigator.vibrate?.(15);
+    }, 480);
+  });
+  const cancel = () => { clearTimeout(timer); timer = null; };
+  view.addEventListener('pointermove', e => { if (timer && start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 10) cancel(); });
+  view.addEventListener('pointerup', cancel);
+  view.addEventListener('pointercancel', cancel);
+  view.addEventListener('contextmenu', e => { if (e.target.closest('.song')) e.preventDefault(); });
 }
 
 function sortSheet(key, isPlaylist) {
@@ -2117,7 +2234,7 @@ function renderLyrics() {
   const box = $('#np-lyrics');
   const data = S.lyrics?.data;
   if (!data) {
-    box.innerHTML = `<div class="lyr-empty">${icon('lyrics')}<p>No lyrics for this song.</p><button class="btn-ghost" data-act="lyrics-add-cur">Add an .lrc or text file</button></div>`;
+    box.innerHTML = `<div class="lyr-empty">${icon('lyrics')}<p>No lyrics for this song.</p><button class="btn-ghost" data-act="lyrics-add-cur">Find or add lyrics</button></div>`;
     return;
   }
   box.innerHTML = `${data.synced ? '' : '<p class="lyr-note">Not synced</p>'}${data.lines.map((l, i) => `<p data-li="${i}"${l.t != null ? ` data-t="${l.t}"` : ''}>${esc(l.text) || '♪'}</p>`).join('')}`;
@@ -2157,6 +2274,147 @@ async function saveLyrics(t, text) {
   resetLyricsIndex();
   if (t === cur()) loadLyrics(t);
   return data;
+}
+
+// ---------- lyrics from the web (LRCLIB, a free public lyrics database) ----------
+
+const LRCLIB = 'https://lrclib.net/api';
+
+// LRCLIB rate-limits bursts ("busy, retry in 1 s"), so space its requests out app-wide.
+let lrcNext = 0;
+async function lrcSlot() {
+  const wait = lrcNext - Date.now();
+  lrcNext = Math.max(Date.now(), lrcNext) + 1200;
+  if (wait > 0) await sleep(wait);
+}
+
+async function lrclibSearch(t) {
+  const artist = artistsOf(t)[0] || t.artist || '';
+  const found = new Map();
+  const add = r => { if (r?.id && !found.has(r.id) && (r.syncedLyrics || r.plainLyrics || r.instrumental)) found.set(r.id, r); };
+  const get = async url => {
+    for (let attempt = 0; ; attempt++) {
+      await lrcSlot();
+      const res = await fetch(url);
+      if ((res.status === 503 || res.status === 429) && attempt < 3) { // busy: wait as the server asks, then retry
+        await sleep(Math.min(5, +res.headers.get('Retry-After') || 1.5) * 1000);
+        continue;
+      }
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(`LRCLIB ${res.status}`);
+      return res.json();
+    }
+  };
+  let failures = 0;
+  const attempt = p => p.catch(() => { failures++; return null; });
+  // 1) exact match on title, artist, album and length
+  if (t.album && t.duration) {
+    add(await attempt(get(`${LRCLIB}/get?${new URLSearchParams({ track_name: t.title, artist_name: artist, album_name: t.album, duration: Math.round(t.duration) })}`)));
+  }
+  // 2) search by title + artist, then a looser free-text search
+  for (const r of (await attempt(get(`${LRCLIB}/search?${new URLSearchParams({ track_name: t.title, artist_name: artist })}`))) || []) add(r);
+  if (found.size < 3) for (const r of (await attempt(get(`${LRCLIB}/search?${new URLSearchParams({ q: `${t.title} ${artist}`.trim() })}`))) || []) add(r);
+  if (!found.size && failures >= 2) throw new Error('Lyrics database unavailable'); // nothing worked: say so instead of "no lyrics"
+  const dur = t.duration || 0;
+  return [...found.values()]
+    .sort((a, b) => (b.syncedLyrics ? 1 : 0) - (a.syncedLyrics ? 1 : 0) || (dur ? Math.abs(a.duration - dur) - Math.abs(b.duration - dur) : 0))
+    .slice(0, 12);
+}
+
+/** "Add lyrics": find them online (with a synced preview before saving) or choose a file. */
+function lyricsSheet(t) {
+  const online = navigator.onLine;
+  const s = sheet(`<div class="sheet-title">Lyrics for “${esc(t.title)}”</div><div id="lyr-body" class="pad">
+    <button class="set-row" data-k="online"${online ? '' : ' disabled'}>${icon('globe')}<div><b>Find lyrics online</b><small>${online ? 'Searches the free LRCLIB database for synced lyrics. Preview before saving.' : 'You’re offline. Connect to the internet to search.'}</small></div>${icon('chev', 'chev')}</button>
+    <button class="set-row" data-k="file">${icon('lyrics')}<div><b>Choose a file</b><small>An .lrc (synced) or plain text file from Files</small></div>${icon('chev', 'chev')}</button>
+  </div>`, { cls: 'tall' });
+  const body = $('#lyr-body', s.el);
+  let results = [];
+  let timer = null;
+  const stopPreview = () => { clearInterval(timer); timer = null; };
+  new MutationObserver((_, obs) => { if (!s.el.isConnected) { obs.disconnect(); stopPreview(); } }).observe($('#sheets'), { childList: true });
+
+  const showResults = () => {
+    stopPreview();
+    const dur = t.duration || 0;
+    body.innerHTML = results.length
+      ? `<p class="hint" style="padding:0 0 6px">Pick the version that matches your song. Synced lyrics scroll with the music.</p>` + results.map((r, i) => {
+        const diff = dur && r.duration ? Math.round(r.duration - dur) : 0;
+        return `<button class="row lrc-res" data-i="${i}"><div class="meta"><div class="t">${esc(r.trackName)}</div><div class="s"><span class="badge"${r.syncedLyrics ? '' : ' style="background:#777;color:#fff"'}>${r.syncedLyrics ? 'SYNCED' : r.instrumental ? 'INSTRUMENTAL' : 'TEXT ONLY'}</span><span class="txt">${esc([r.artistName, r.albumName, r.duration ? fmtTime(r.duration) : ''].filter(Boolean).join(' · '))}${Math.abs(diff) > 3 ? ` · ${diff > 0 ? '+' : ''}${diff}s vs your song` : ''}</span></div></div>${icon('chev', 'chev')}</button>`;
+      }).join('')
+      : `<div class="empty small"><h3>No lyrics found</h3><p class="hint">Check the song’s title and artist in Edit song info, or choose a file instead.</p><button class="btn-ghost" data-k="file">Choose a file</button></div>`;
+  };
+
+  const showPreview = r => {
+    stopPreview();
+    const data = parseLyrics(r.syncedLyrics || r.plainLyrics || '');
+    if (!data) { toast('That version has no lyrics text'); return; }
+    const first = data.lines.slice(0, 8); // a short preview; the full lyrics download when you approve
+    body.innerHTML = `<div class="lrc-head"><b>${esc(r.trackName)}</b><small>${esc([r.artistName, r.albumName].filter(Boolean).join(' · '))} · ${data.synced ? 'synced' : 'not synced'} · ${plural(data.lines.length, 'line')}</small></div>
+      <div class="lrc-preview" id="lrc-prev">${first.map((l, i) => `<p data-li="${i}">${l.t != null ? `<span>${fmtTime(l.t)}</span>` : ''}${esc(l.text) || '♪'}</p>`).join('')}${data.lines.length > first.length ? '<p class="more">…</p>' : ''}</div>
+      ${data.synced ? `<button class="btn-ghost" data-k="play">${icon('play')} Play preview in sync</button>` : ''}
+      <button class="btn-primary" style="width:100%;margin:14px 0 4px" data-k="use">Use these lyrics</button>
+      <button class="sheet-item center" data-k="back">Back to results</button>`;
+    for (const ic of $$('.btn-ghost .ic', body)) ic.style.cssText = 'width:15px;height:15px;vertical-align:-2px';
+    body.dataset.pick = String(results.indexOf(r));
+    body._preview = { r, data, first };
+  };
+
+  const playPreview = () => {
+    const { data, first } = body._preview;
+    const startAt = Math.max(0, (first[0]?.t ?? 0) - 1.5);
+    if (cur() !== t) startQueue([t.id], 0, null);
+    else eng.play();
+    setTimeout(() => { if (cur() === t) eng.seek(startAt); }, cur() === t ? 0 : 600);
+    stopPreview();
+    timer = setInterval(() => {
+      const box = $('#lrc-prev', s.el);
+      if (!box || cur() !== t) return stopPreview();
+      const i = activeLine({ synced: true, lines: data.lines }, eng.time());
+      $$('p.on', box).forEach(p => p.classList.remove('on'));
+      const p = box.querySelector(`p[data-li="${i}"]`);
+      if (p) { p.classList.add('on'); box.scrollTo({ top: p.offsetTop - 40, behavior: 'smooth' }); }
+      if (i >= first.length) stopPreview();
+    }, 200);
+  };
+
+  const use = async () => {
+    const { r } = body._preview;
+    stopPreview();
+    try {
+      // Download the complete lyrics for the approved version.
+      await lrcSlot();
+      const full = await fetch(`${LRCLIB}/get/${r.id}`).then(x => (x.ok ? x.json() : r)).catch(() => r);
+      const text = full.syncedLyrics || full.plainLyrics;
+      if (!text) return toast('That version has no lyrics text');
+      const data = await saveLyrics(t, text);
+      if (!data) return;
+      s.close();
+      toast(data.synced ? 'Synced lyrics added. Tap the lyrics button in the player.' : 'Lyrics added (not synced)', 3200);
+    } catch {
+      toast('Couldn’t download the lyrics');
+    }
+  };
+
+  s.el.addEventListener('click', async e => {
+    const k = e.target.closest('[data-k]')?.dataset.k;
+    const res = e.target.closest('.lrc-res');
+    if (res) return showPreview(results[+res.dataset.i]);
+    if (k === 'file') { s.close(); return pickLyrics(t); }
+    if (k === 'back') return showResults();
+    if (k === 'play') return playPreview();
+    if (k === 'use') return use();
+    if (k === 'online') {
+      body.innerHTML = '<div class="loading">Searching for lyrics…</div>';
+      try {
+        results = await lrclibSearch(t);
+        showResults();
+      } catch (err) {
+        console.warn('Lyrics search failed', err);
+        body.innerHTML = '<p class="hint err" style="padding:0">Couldn’t reach the lyrics database. Check your connection and try again.</p>';
+      }
+    }
+  });
 }
 
 function pickLyrics(t) {
@@ -2276,7 +2534,14 @@ function eqEditorHTML() {
 function rerenderEq(root) {
   const ed = $('.eq-editor', root);
   if (!ed) return;
+  // Keep the presets bar (and the sheet) where they were, instead of jumping back to the start.
+  const presetsX = $('.chips.scroll', ed)?.scrollLeft || 0;
+  const sheetEl = ed.closest('.sheet');
+  const sheetY = sheetEl?.scrollTop || 0;
   ed.outerHTML = eqEditorHTML();
+  const bar = $('.eq-editor .chips.scroll', root);
+  if (bar) bar.scrollLeft = presetsX;
+  if (sheetEl) sheetEl.scrollTop = sheetY;
   bindEq(root);
 }
 
@@ -2730,7 +2995,7 @@ function songMenu(tid, pi, fromNP = false) {
     fromNP && { icon: 'car', label: 'Car mode', run: openCar },
     fromNP && { icon: 'mic', label: CFG.karaoke ? 'Turn karaoke off' : 'Karaoke mode', on: CFG.karaoke, badge: CFG.enhanced ? '' : 'Enhanced audio', run: () => { if (!CFG.enhanced) setCfg('enhanced', true); setCfg('karaoke', !CFG.karaoke); toast(CFG.karaoke ? 'Karaoke on: vocals reduced' : 'Karaoke off'); } },
     { icon: 'note', label: t.memory?.text ? 'Edit memory' : 'Add a memory', run: () => memorySheet(t) },
-    { icon: 'lyrics', label: t.hasLyrics ? 'Replace lyrics' : 'Add lyrics (.lrc or text)', run: () => pickLyrics(t) },
+    { icon: 'lyrics', label: t.hasLyrics ? 'Replace lyrics' : 'Add lyrics', run: () => lyricsSheet(t) },
     t.hasLyrics && { icon: 'close', label: 'Remove lyrics', run: async () => { await db.del('lyrics', t.id); t.hasLyrics = false; await db.put('tracks', t); resetLyricsIndex(); if (t === cur()) loadLyrics(t); toast('Lyrics removed'); } },
     top.v !== 'album' && { icon: 'album', label: 'Go to album', run: () => navigate('album', albumKey(t)) },
     ...artistsOf(t).slice(0, 3).filter(a => !(top.v === 'artist' && top.id === a)).map(a => ({ icon: 'user', label: `Go to ${a}`, run: () => navigate('artist', a) })),
@@ -3111,14 +3376,14 @@ function editSheet(tracks) {
   const langOpts = [...new Set([...(langCode ? [langCode] : []), ...L.COMMON_LANGS])].map(c => `<option value="${c}"${c === langCode ? ' selected' : ''}>${esc(L.langName(c))}</option>`).join('');
   const langSrc = single && t0.lang ? { ai: 'detected by listening', text: 'guessed from the text', user: 'set by you' }[t0.lang.src] || '' : '';
   const artKey = common('artKey') || null;
-  const s = sheet(`<div class="sheet-title">${single ? 'Edit song info' : 'Edit album info'}</div>
+  const s = sheet(`<div class="sheet-title">${single ? 'Edit song info' : common('album') != null ? 'Edit album info' : `Edit ${tracks.length} songs`}</div>
     <div class="edit-art"><div id="edit-art">${artHTML(artKey, 'lg')}</div><button class="btn-ghost" data-pick>${icon('image')} Change cover</button></div>
     ${inputs.join('')}
     <label class="field"><span>Language${langSrc ? ` · <em>${langSrc}</em>` : ''}</span>
       <div class="lang-row"><select class="input" name="lang"><option value=""${!langCode ? ' selected' : ''}>${common('lang') == null && !single ? 'Multiple values' : 'Unknown'}</option>${langOpts}</select>
       ${single ? `<button class="btn-ghost" data-detect>${icon('sparkle')} Listen</button>` : ''}</div></label>
     <button class="btn-primary" data-save>Save</button>
-    ${!single ? `<p class="hint">Changes apply to all ${tracks.length} songs on this album.</p>` : ''}`, { cls: 'tall' });
+    ${!single ? `<p class="hint">Changes apply to all ${tracks.length} songs. Fields showing “Multiple values” stay as they are unless you type something.</p>` : ''}`, { cls: 'tall' });
   for (const ic of $$('.btn-ghost .ic', s.el)) ic.style.cssText = 'width:16px;height:16px;vertical-align:-3px';
 
   // Genre suggestions: from the library immediately, then MusicBrainz when online.
@@ -3662,6 +3927,14 @@ const ACTIONS = {
       if (e?.name !== 'AbortError' && e?.name !== 'NotAllowedError') toast('Couldn’t open the device picker', 3000);
     }
   },
+  'sel-start': () => startSelect(),
+  'sel-done': endSelect,
+  'sel-all': () => {
+    const all = selectableIds();
+    SEL.ids = SEL.ids.size === all.length ? new Set() : new Set(all);
+    syncSelection();
+  },
+  'sel-do': el => selAction(el.dataset.do),
   'set-theme': el => { CFG.theme = el.dataset.k; saveCfg(); applyTheme(); refresh(); },
   'set-bg': el => { CFG.bg = el.dataset.k; saveCfg(); applyTheme(); refresh(); },
   'open-quick': openQuick,
@@ -3744,7 +4017,7 @@ const ACTIONS = {
   'np-artist': () => { const t = cur(); if (t) navigate('artist', artistOf(t)); },
   'memory-cur': () => { const t = cur(); if (t) memorySheet(t); },
   'np-lyrics': toggleLyricsView,
-  'lyrics-add-cur': () => { const t = cur(); if (t) pickLyrics(t); },
+  'lyrics-add-cur': () => { const t = cur(); if (t) lyricsSheet(t); },
   'eq-sheet': eqSheet,
   'speed-sheet': speedSheet,
   ab: cycleLoop,
@@ -3856,6 +4129,16 @@ const ACTIONS = {
 function bindEvents() {
   document.addEventListener('click', e => {
     eng.prime(); // any tap unlocks audio on iPhone (and builds the enhanced audio graph when enabled)
+    // The click that ends a long-press shouldn't also play/toggle the song.
+    if ($('#view').dataset.suppressClick) {
+      delete $('#view').dataset.suppressClick;
+      if (e.target.closest('#view')) { e.preventDefault(); e.stopPropagation(); return; }
+    }
+    // While selecting, tapping a song ticks it instead of playing it.
+    if (selecting()) {
+      const row = e.target.closest('#view .song[data-tid]');
+      if (row) { e.preventDefault(); e.stopPropagation(); toggleSel(row.dataset.tid); return; }
+    }
     const el = e.target.closest('[data-act]');
     if (!el || el.disabled) return;
     const fn = ACTIONS[el.dataset.act];
@@ -3876,6 +4159,7 @@ function bindEvents() {
   });
   $('#view').addEventListener('keydown', e => { if (e.target.id === 'q' && e.key === 'Enter') e.target.blur(); });
   $('#view').addEventListener('scroll', onScroll, { passive: true });
+  bindLongPress();
   $('#np-lyrics').addEventListener('click', e => {
     const p = e.target.closest('p[data-t]');
     if (p) eng.seek(+p.dataset.t);
