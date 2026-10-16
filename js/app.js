@@ -981,7 +981,7 @@ const VIEWS = {
       <div class="group"><h3>Danger zone</h3>
         <button class="set-row danger" data-act="wipe">${icon('trash')}<div><b>Delete everything</b><small>Removes all songs, playlists and settings from this device</small></div></button>
       </div>
-      <p class="foot">Artify ${VERSION}<br>Your music never leaves this device.</p>
+      <p class="foot">Artify ${VERSION}<br>Your music never leaves this device.<br><span class="screen-info">${esc(screenInfo())}</span></p>
     </div>`;
   },
 
@@ -3903,6 +3903,44 @@ function bindEvents() {
     if (files.length === 1 && /\.zip$/i.test(files[0].name)) importBackup(files[0]);
     else importFiles(files);
   });
+}
+
+// ---------- iPhone home-screen app: keep the layout full height ----------
+
+// iOS bug: in a home-screen web app, the first time the keyboard opens the viewport shrinks (~59 pt) and
+// stays shrunk, so the bottom bar floats above a dead band. Re-measuring fixes it: briefly toggling a
+// full-height element forces WebKit to recompute the viewport. Only runs when the height is actually stuck.
+let maxVH = window.innerHeight;
+window.addEventListener('resize', () => { maxVH = Math.max(maxVH, window.innerHeight); });
+window.addEventListener('orientationchange', () => setTimeout(() => { maxVH = window.innerHeight; }, 500));
+function healViewport() {
+  if (maxVH - window.innerHeight <= 4) return;
+  const app = $('#app');
+  const view = $('#view');
+  const st = view.scrollTop;
+  app.style.display = 'none';
+  void app.offsetHeight; // synchronous reflow
+  app.style.display = '';
+  view.scrollTop = st;
+}
+document.addEventListener('focusout', e => {
+  if (e.target.matches?.('input, textarea, select')) setTimeout(healViewport, 140);
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') setTimeout(healViewport, 300);
+});
+
+/** Numbers that show how the phone sizes the app (Settings › Screen), to diagnose layout problems. */
+function screenInfo() {
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:fixed;top:0;left:0;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);visibility:hidden';
+  document.body.appendChild(probe);
+  const cs = getComputedStyle(probe);
+  const top = parseFloat(cs.paddingTop) || 0;
+  const bottom = parseFloat(cs.paddingBottom) || 0;
+  probe.remove();
+  const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+  return `${standalone ? 'Home-screen app' : 'Browser'} · window ${window.innerWidth}×${window.innerHeight} · screen ${screen.width}×${screen.height} · safe areas ${top}/${bottom}`;
 }
 
 // ---------- boot ----------

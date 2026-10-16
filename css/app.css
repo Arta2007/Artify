@@ -50,6 +50,13 @@ h1, h2, h3 { margin: 0; }
 /* ---------- Shell ---------- */
 
 #app { position: fixed; inset: 0; max-width: 680px; margin: 0 auto; background: var(--bg); overflow: hidden; }
+
+/* Home-screen app on iPhone: the black-translucent status bar shifts the document up, so make it taller by the
+   status-bar height (otherwise a strip shows at the bottom), and paint anything under the tab bar black. */
+@media (display-mode: standalone) {
+  html { min-height: calc(100% + env(safe-area-inset-top, 0px)); }
+  html, body { background: #000; }
+}
 #statusbar { position: absolute; top: 0; left: 0; right: 0; height: var(--st); background: color-mix(in srgb, var(--bg) 92%, transparent); z-index: 30; }
 #view {
   position: absolute; top: var(--st); left: 0; right: 0; bottom: 0;
@@ -678,3 +685,4 @@ textarea.input { resize: none; font-family: inherit; line-height: 1.4; }
 .add-tip { display: flex; gap: 10px; align-items: flex-start; text-align: left; background: var(--surface-2); border-radius: 10px; margin: 0 16px 8px; padding: 10px 12px; }
 .add-tip .ic { width: 18px; height: 18px; color: var(--accent); margin-top: 1px; }
 .np-foot .icon-btn { width: 40px; }
+.screen-info { font-size: 11px; opacity: .7; }
