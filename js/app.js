@@ -8,6 +8,7 @@ import * as L from './lang.js';
 import * as smart from './smart.js';
 import { parseLyrics, activeLine } from './lyrics.js';
 import { writeZip, readZip } from './zip.js';
+import * as free from './freemusic.js';
 
 const VERSION = '2.0.0';
 
@@ -608,6 +609,7 @@ function navigate(v, id) {
   closeNP();
   closeCar();
   closeQuick();
+  stopPreview();
   const stack = S.stacks[S.tab];
   stack.at(-1).scroll = $('#view').scrollTop;
   stack.push({ v, id });
@@ -1139,6 +1141,20 @@ const VIEWS = {
     return `${topbar('Equalizer', true)}<div class="pad">${eqEditorHTML()}</div>`;
   },
 
+  free(top) {
+    top.cat ||= 'all';
+    const chips = free.CATEGORIES.map(c => `<button class="chip${top.cat === c.id ? ' on' : ''}" data-act="free-cat" data-c="${c.id}">${esc(c.label)}</button>`).join('');
+    return `${topbar('Free music', true)}
+      <div class="pad free-intro"><p>Music that’s <b>legally free</b> to download from the <b>Internet Archive</b>: Creative Commons and public-domain recordings, netlabel releases, and live concerts from bands that allow sharing. Tap an album, preview, then add songs to your library.</p></div>
+      <div class="search-wrap" style="position:static"><label class="search-box">${icon('search')}<input id="free-q" type="search" enterkeyhint="search" placeholder="Search free music" value="${esc(top.q || '')}" autocomplete="off" autocorrect="off" spellcheck="false"></label></div>
+      <div class="chips">${chips}</div>
+      <div id="free-results"><div class="loading">Loading…</div></div>`;
+  },
+
+  freeitem(top) {
+    return `${topbar(top.title || 'Album', true)}<div id="free-item"><div class="loading">Loading…</div></div>`;
+  },
+
   theme() {
     return `${topbar('Theme', true)}<div class="pad">
       <div class="theme-preview"><div class="tp-head"><span class="avatar">${icon('user')}</span><b>Good evening</b></div>
@@ -1419,6 +1435,8 @@ const AFTER = {
     if (top.reorder) bindReorder(S.playlists.get(top.id));
   },
   folder() {},
+  free: top => loadFreeResults(top),
+  freeitem: top => loadFreeItem(top),
 
   async settings() {
     updateJobStatus();
@@ -1478,7 +1496,8 @@ function searchResults() {
     const a = autoLists();
     for (const c of [...a.fam, ...a.mood, ...a.lang]) tiles.push(tile(c.v, c.id, c.title, c.color, artHTML(c.tracks.find(t => t.artKey)?.artKey)));
     for (const g of d.genres.filter(g => !smart.familyOfGenre(g.name)).slice(0, 8)) tiles.push(tile('genre', g.name, g.name, tileColor(g.name), artHTML(g.artKey)));
-    return `<h2 class="sec-h">Browse all</h2><div class="tiles">${tiles.join('')}</div>`;
+    const freeBanner = `<button class="free-banner" data-act="nav" data-v="free" data-id="free">${icon('import')}<div><b>Free music</b><small>Legal free downloads from the Internet Archive</small></div>${icon('chev')}</button>`;
+    return `${freeBanner}<h2 class="sec-h">Browse all</h2><div class="tiles">${tiles.join('')}</div>`;
   }
   const has = s => fold(s).includes(q);
   const songs = d.all.filter(t => has(t.title) || has(t.artist) || has(t.album) || has(t.albumArtist) || has(t.memory?.text)).slice(0, 60);
@@ -2666,6 +2685,116 @@ async function importShared() {
   else toast('Nothing to import from the share');
 }
 
+// ---------- free music (Internet Archive) ----------
+
+const freeOffline = () => '<div class="empty small"><div class="empty-ic">' + icon('globe') + '</div><h3>You’re offline</h3><p class="hint">Free music needs an internet connection. Songs you add stay offline forever.</p></div>';
+
+async function loadFreeResults(top) {
+  const box = $('#free-results');
+  if (!navigator.onLine) { box.innerHTML = freeOffline(); return; }
+  const key = `${top.q || ''}|${top.cat}`;
+  try {
+    if (top.cacheKey !== key) { top.results = await free.search(top.q, top.cat); top.cacheKey = key; }
+    if (!box.isConnected) return;
+    box.innerHTML = top.results.length
+      ? top.results.map(r => `<button class="row free-row" data-act="free-open" data-id="${esc(r.id)}" data-title="${esc(r.title)}">
+          <div class="art sm loaded"><img src="${esc(free.thumbUrl(r.id))}" alt="" loading="lazy"></div>
+          <div class="meta"><div class="t">${esc(r.title)}</div><div class="s"><span class="badge free-badge">${esc(r.license.short)}</span><span class="txt">${esc([r.creator, r.year].filter(Boolean).join(' · '))}</span></div></div>${icon('chev', 'chev')}</button>`).join('')
+      : '<div class="empty small"><h3>Nothing found</h3><p class="hint">Try another word or category.</p></div>';
+  } catch {
+    if (box.isConnected) box.innerHTML = '<p class="hint err">Couldn’t reach the Internet Archive. Try again in a moment.</p>';
+  }
+}
+
+async function loadFreeItem(top) {
+  const box = $('#free-item');
+  if (!navigator.onLine) { box.innerHTML = freeOffline(); return; }
+  try {
+    top.data ||= await free.item(top.id);
+    if (!box.isConnected) return;
+    const it = top.data;
+    const have = new Set([...S.tracks.values()].filter(t => t.source?.id === it.id).map(t => t.source.file));
+    box.innerHTML = `<div class="free-hero">
+        <div class="art xl loaded"><img src="${esc(free.thumbUrl(it.id))}" alt=""></div>
+        <h1>${esc(it.title)}</h1>
+        <p class="free-by">${esc([it.creator, it.year].filter(Boolean).join(' · '))}</p>
+        <p class="free-lic">${icon('shield')}<span>${esc(it.license.long)}</span></p>
+        ${it.description ? `<p class="free-desc">${esc(it.description)}</p>` : ''}
+        ${it.tracks.length ? `<button class="btn-primary inline" data-act="free-add-all">${icon('import')} Add all ${it.tracks.length} songs</button>` : ''}
+        <a class="free-src" href="${esc(free.pageUrl(it.id))}" target="_blank" rel="noopener">View on the Internet Archive</a>
+      </div>
+      ${it.tracks.length ? it.tracks.map((tr, i) => `<div class="row free-track${have.has(tr.name) ? ' added' : ''}" data-i="${i}">
+          <button class="icon-btn prev-btn" data-act="free-preview" data-i="${i}" aria-label="Preview">${icon('play')}</button>
+          <div class="meta"><div class="t">${esc(tr.title)}</div><div class="s"><span class="txt">${esc([tr.artist, tr.length ? fmtTime(tr.length) : '', tr.size ? fmtBytes(tr.size) : ''].filter(Boolean).join(' · '))}</span></div></div>
+          <button class="icon-btn add-btn" data-act="free-add" data-i="${i}" aria-label="Add to library">${icon(have.has(tr.name) ? 'check' : 'plus')}</button></div>`).join('')
+        : '<div class="empty small"><h3>No MP3 songs in this item</h3><p class="hint">Try another album.</p></div>'}`;
+    for (const ic of $$('.btn-primary .ic', box)) ic.style.cssText = 'width:17px;height:17px;vertical-align:-3px';
+  } catch {
+    if (box.isConnected) box.innerHTML = '<p class="hint err" style="padding:16px">Couldn’t load this album. Try again in a moment.</p>';
+  }
+}
+
+// Short previews play in a separate player so your queue isn't touched.
+const previewEl = new Audio();
+previewEl.preload = 'none';
+let previewIdx = null;
+previewEl.addEventListener('ended', () => setPreviewIcon(null));
+function setPreviewIcon(i) {
+  previewIdx = i;
+  for (const b of $$('#free-item .prev-btn')) b.innerHTML = icon(+b.dataset.i === i ? 'pause' : 'play');
+}
+function togglePreview(i) {
+  const tr = topOf().data?.tracks[i];
+  if (!tr) return;
+  if (previewIdx === i && !previewEl.paused) { previewEl.pause(); setPreviewIcon(null); return; }
+  if (!eng.paused()) eng.pause();
+  previewEl.src = tr.url;
+  previewEl.play().catch(() => toast('Couldn’t play the preview'));
+  setPreviewIcon(i);
+}
+const stopPreview = () => { if (!previewEl.paused) previewEl.pause(); setPreviewIcon(null); };
+
+let freeCover = null; // { id, blob } — one album cover, fetched once and reused for its songs
+async function coverFor(it) {
+  if (!it.coverUrl) return null;
+  if (freeCover?.id === it.id) return freeCover.blob;
+  try {
+    const r = await fetch(it.coverUrl);
+    const blob = r.ok ? await r.blob() : null;
+    freeCover = { id: it.id, blob };
+    return blob;
+  } catch { return null; }
+}
+
+async function downloadFree(it, idxs) {
+  const tracks = idxs.map(i => it.tracks[i]).filter(Boolean);
+  const have = new Set([...S.tracks.values()].filter(t => t.source?.id === it.id).map(t => t.source.file));
+  const todo = tracks.filter(tr => !have.has(tr.name));
+  if (!todo.length) return toast(tracks.length > 1 ? 'Already in your library' : 'This song is already in your library');
+  const prog = progressToast();
+  const files = [];
+  const extra = {};
+  const art = await coverFor(it);
+  try {
+    for (const [n, tr] of todo.entries()) {
+      prog.set(`Downloading ${n + 1} of ${todo.length}…`, n / todo.length);
+      const res = await fetch(tr.url);
+      if (!res.ok) throw new Error(`Download failed (${res.status})`);
+      const blob = await res.blob();
+      const name = safeName(`${tr.artist ? tr.artist + ' - ' : ''}${tr.title}`) + '.mp3';
+      files.push(new File([blob], name, { type: 'audio/mpeg' }));
+      extra[name] = { title: tr.title, artist: tr.artist, album: tr.album, track: tr.track, year: it.year, artBlob: art, source: { site: 'archive', id: it.id, file: tr.name, license: it.license.short } };
+    }
+  } catch (e) {
+    prog.done();
+    toast(e.message || 'Download failed', 3500);
+    if (!files.length) return;
+  }
+  prog.done();
+  await importFiles(files, extra);
+  if (topOf().v === 'freeitem') loadFreeItem(topOf());
+}
+
 // ---------- quick page (widget-style launcher) ----------
 
 const MAX_PINS = 6;
@@ -2755,7 +2884,8 @@ function parseName(name) {
   return m ? { artist: m[1].trim(), title: m[2].trim() } : { artist: '', title: base };
 }
 
-async function importFiles(fileList) {
+/** extra: optional { [fileName]: { title, artist, album, track, artBlob, source } } used when a file lacks tags. */
+async function importFiles(fileList, extra = {}) {
   const all = [...fileList];
   const files = all.filter(isAudio);
   const lrcs = all.filter(f => isLyricsFile(f) && !isAudio(f));
@@ -2771,18 +2901,20 @@ async function importFiles(fileList) {
     try {
       const tags = await readTags(f);
       const fromName = parseName(f.name);
-      const artKey = tags.picture?.data?.length ? await saveArt(new Blob([tags.picture.data], { type: tags.picture.mime })).catch(() => null) : null;
+      const ov = extra[f.name] || {};
+      let artKey = tags.picture?.data?.length ? await saveArt(new Blob([tags.picture.data], { type: tags.picture.mime })).catch(() => null) : null;
+      if (!artKey && ov.artBlob) artKey = await saveArt(ov.artBlob).catch(() => null);
       const mime = MIME[extOf(f.name)] || f.type || 'audio/mpeg';
       const blob = new Blob([await f.arrayBuffer()], { type: mime });
       const t = {
         id: uid(),
-        title: tags.title || fromName.title || f.name,
-        artist: tags.artist || fromName.artist || '',
-        album: tags.album || '',
+        title: tags.title || ov.title || fromName.title || f.name,
+        artist: tags.artist || ov.artist || fromName.artist || '',
+        album: tags.album || ov.album || '',
         albumArtist: tags.albumArtist || '',
-        genre: tags.genre || '',
-        year: tags.year || '',
-        track: tags.track || 0,
+        genre: tags.genre || ov.genre || '',
+        year: tags.year || ov.year || '',
+        track: tags.track || ov.track || 0,
         disc: tags.disc || 0,
         duration: tags.duration || 0,
         artKey,
@@ -2793,6 +2925,7 @@ async function importFiles(fileList) {
         liked: false,
         plays: 0,
       };
+      if (ov.source) t.source = ov.source; // where a free download came from (for credit/licence)
       const guess = L.detectFromText(t.title, t.album);
       if (guess) t.lang = { ...guess, src: 'text' };
       await db.put('files', blob, t.id);
@@ -3000,6 +3133,7 @@ function songMenu(tid, pi, fromNP = false) {
     top.v !== 'album' && { icon: 'album', label: 'Go to album', run: () => navigate('album', albumKey(t)) },
     ...artistsOf(t).slice(0, 3).filter(a => !(top.v === 'artist' && top.id === a)).map(a => ({ icon: 'user', label: `Go to ${a}`, run: () => navigate('artist', a) })),
     { icon: 'eq', label: 'Equalizer for this song', run: () => { if (t !== cur()) { toast('Play the song to tune its EQ'); return; } eqSheet(); } },
+    t.source?.site === 'archive' && { icon: 'globe', label: `Source: Internet Archive · ${t.source.license || 'free'}`, run: () => window.open(free.pageUrl(t.source.id), '_blank', 'noopener') },
     { icon: 'edit', label: 'Edit song info', run: () => editSheet([t]) },
     { icon: 'share', label: 'Save to Files / Share', run: () => exportTracks([t]) },
     { icon: 'trash', label: 'Delete from library', danger: true, run: () => deleteTracks([t.id], `“${t.title}”`) },
@@ -3067,6 +3201,7 @@ function ctxMenu() {
 function addMenu() {
   menu(`<div class="sheet-title">Add to your library</div><p class="hint add-tip">${icon('import')}<span>Songs you receive by AirDrop or “Save to Files” are in <b>Files › Downloads</b>. Choose <b>Add music files</b> and open Downloads.</span></p>`, [
     { icon: 'import', label: 'Add music files', run: pickFiles },
+    { icon: 'globe', label: 'Find free music (Internet Archive)', run: () => navigate('free', 'free') },
     { icon: 'playlist-add', label: 'Create playlist', run: newPlaylist },
     { icon: 'sparkle', label: 'Create smart playlist', run: () => smartBuilder() },
     { icon: 'folder', label: 'Create folder', run: () => createFolder() },
@@ -3927,6 +4062,11 @@ const ACTIONS = {
       if (e?.name !== 'AbortError' && e?.name !== 'NotAllowedError') toast('Couldn’t open the device picker', 3000);
     }
   },
+  'free-cat': el => { const top = topOf(); top.cat = el.dataset.c; $$('[data-act="free-cat"]').forEach(b => b.classList.toggle('on', b === el)); $('#free-results').innerHTML = '<div class="loading">Loading…</div>'; loadFreeResults(top); },
+  'free-open': el => { stopPreview(); navigate('freeitem', el.dataset.id); topOf().title = el.dataset.title; },
+  'free-preview': el => togglePreview(+el.dataset.i),
+  'free-add': el => { const it = topOf().data; if (it) downloadFree(it, [+el.dataset.i]); },
+  'free-add-all': () => { const it = topOf().data; if (it) downloadFree(it, it.tracks.map((_, i) => i)); },
   'sel-start': () => startSelect(),
   'sel-done': endSelect,
   'sel-all': () => {
@@ -4157,7 +4297,16 @@ function bindEvents() {
     S.query = e.target.value;
     updateResults();
   });
-  $('#view').addEventListener('keydown', e => { if (e.target.id === 'q' && e.key === 'Enter') e.target.blur(); });
+  $('#view').addEventListener('keydown', e => {
+    if (e.target.id === 'q' && e.key === 'Enter') e.target.blur();
+    if (e.target.id === 'free-q' && e.key === 'Enter') {
+      const top = topOf();
+      top.q = e.target.value.trim();
+      e.target.blur();
+      $('#free-results').innerHTML = '<div class="loading">Searching…</div>';
+      loadFreeResults(top);
+    }
+  });
   $('#view').addEventListener('scroll', onScroll, { passive: true });
   bindLongPress();
   $('#np-lyrics').addEventListener('click', e => {
