@@ -18,7 +18,6 @@ No server, no build step, no accounts. It's plain HTML/CSS/JS.
 - **Clean up song info**: removes "(Official Video) [HD]" and the like, moves "feat." credits into the artist, fills missing genres
 - **Find duplicates**: keeps the best-quality copy and merges likes, plays and playlists
 - **Song memories**: attach a note to any song; it shows in Now Playing and is searchable
-- **Free music** (Search › Free music, or Your Library › + › Find free music): search the Internet Archive for music that is legally free to share (Creative Commons, public domain, netlabel releases, live concerts from bands that allow taping), preview tracks, and add them straight to your library with cover, licence and source saved
 - **Find lyrics online** (Add lyrics › Find lyrics online): searches the free LRCLIB database, previews the first synced lines in time with your song, and downloads the full lyrics when you approve
 - **Select several songs** (Select button, or press and hold a song) to add them to a playlist, queue, like, edit, save, remove or delete in one go
 - **Synced lyrics** from .lrc files you add (or lyrics embedded in the file), and **lyrics search**: type a line in Search to find the song and play it from that line
@@ -27,6 +26,7 @@ No server, no build step, no accounts. It's plain HTML/CSS/JS.
 - **Backup & family sharing**: export the library or a playlist (songs included) as one .zip, import it on another phone
 - **Save to Files / Share**: MP3s get the edited tags, cover and lyrics written into the file
 - **Spotify playlist import** (Settings › Import Spotify playlists): copies playlist names and track lists only
+- **Missing songs** (Your Library, or “See missing songs” on an imported Spotify playlist): every song you don’t have yet, with buttons to search Apple Music / iTunes Store, Bandcamp, Amazon, Qobuz and 7digital, plus copy/share the list. Add the files and they match automatically
 
 **Playlists**
 - Song picker with search and recommendations when you create a playlist (or tap “Add songs”)

@@ -1,10 +1,10 @@
 // Offline cache for the app shell. Bump CACHE when files change so phones pick up the new version.
-const CACHE = 'artify-v9';
+const CACHE = 'artify-v10';
 const RUNTIME = 'stash-runtime-v1'; // the AI library from the CDN, cached the first time it's used
 const ASSETS = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/db.js', 'js/tags.js', 'js/spotify.js', 'js/icons.js', 'js/engine.js', 'js/analysis.js',
-  'js/analysis-worker.js', 'js/lang.js', 'js/lang-worker.js', 'js/smart.js', 'js/lyrics.js', 'js/zip.js', 'js/freemusic.js',
+  'js/analysis-worker.js', 'js/lang.js', 'js/lang-worker.js', 'js/smart.js', 'js/lyrics.js', 'js/zip.js',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
 
