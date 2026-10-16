@@ -1,0 +1,19 @@
+#!/bin/sh
+# Automatically bump the offline cache version in sw.js on every commit that changes app files,
+# so installed phones always pick up the new version. (Enable once with: git config core.hooksPath .githooks)
+
+changed=$(git diff --cached --name-only --diff-filter=ACMRD | grep -v -e '^sw\.js$' -e '^README\.md$' -e '^\.githooks/' -e '^\.gitignore$')
+[ -z "$changed" ] && exit 0
+
+# Already bumped by hand in this commit? Then leave it.
+if git diff --cached -U0 -- sw.js | grep -q "^+const CACHE"; then exit 0; fi
+
+cur=$(sed -n "s/^const CACHE = 'artify-v\([0-9][0-9]*\)';.*/\1/p" sw.js)
+if [ -z "$cur" ]; then
+  echo "pre-commit: couldn't find the CACHE version in sw.js; not bumped"
+  exit 0
+fi
+next=$((cur + 1))
+sed -i "s/^const CACHE = 'artify-v$cur';/const CACHE = 'artify-v$next';/" sw.js
+git add sw.js
+echo "pre-commit: bumped offline cache to artify-v$next"

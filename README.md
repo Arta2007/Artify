@@ -1,10 +1,14 @@
-# Stash
+# Artify
 
 A Spotify-style offline music player for iPhone that runs as a home-screen web app. You add audio files you own, and they're stored on the phone and play with no internet connection. You can also import the track lists of your Spotify playlists; songs you've added show up in them automatically.
 
 No server, no build step, no accounts. It's plain HTML/CSS/JS.
 
 ## Features
+
+**Look**
+- Themes: 8 accent colours (light blue by default) and 4 backgrounds (Dark, True black, Midnight, Plum) in Settings › Theme
+- Speaker button in the player: pick AirPods, Bluetooth speakers or AirPlay (iPhone shows its own output picker)
 
 **Library**
 - Home, Search and Library tabs, a mini player, a full Now Playing screen, and a queue
@@ -15,7 +19,8 @@ No server, no build step, no accounts. It's plain HTML/CSS/JS.
 - **Find duplicates**: keeps the best-quality copy and merges likes, plays and playlists
 - **Song memories**: attach a note to any song; it shows in Now Playing and is searchable
 - **Synced lyrics** from .lrc files you add (or lyrics embedded in the file), and **lyrics search**: type a line in Search to find the song and play it from that line
-- **Quick page**: a widget-style screen with a now-playing card and big one-tap tiles (shuffle Liked, shuffle everything, today's mixes, and up to 6 pinned playlists/albums/mixes). Pin from any ··· menu; optionally open Stash on it every time. The lock screen shows the cover, play/pause, skip and progress while music plays. (iPhone doesn't allow real home-screen widgets or Siri Shortcuts for web apps.)
+- **Quick page**: a widget-style screen with a now-playing card and big one-tap tiles (shuffle Liked, shuffle everything, today's mixes, and up to 6 pinned playlists/albums/mixes). Pin from any ··· menu; optionally open Artify on it every time. The lock screen shows the cover, play/pause, skip and progress while music plays. (iPhone doesn't allow real home-screen widgets or Siri Shortcuts for web apps.)
+- **Share to Artify** from other apps on Android and desktop Chrome (it appears in the Share menu and imports the song). On iPhone, web apps can’t appear in the share sheet or receive AirDrop: songs you AirDrop or “Save to Files” land in Files › Downloads, then use Add music.
 - **Backup & family sharing**: export the library or a playlist (songs included) as one .zip, import it on another phone
 - **Save to Files / Share**: MP3s get the edited tags, cover and lyrics written into the file
 - **Spotify playlist import** (Settings › Import Spotify playlists): copies playlist names and track lists only
@@ -43,16 +48,16 @@ No server, no build step, no accounts. It's plain HTML/CSS/JS.
 
 ## Put it online (GitHub Pages, free)
 
-1. Create a GitHub account and a new **public** repository, e.g. `stash`.
+1. Create a GitHub account and a new **public** repository (this one is `Artify`).
 2. Upload everything in this folder (drag and drop on the repo page works). Skip `.claude/` and `README.md` if you like.
 3. In the repo go to **Settings › Pages**. Under "Build and deployment", pick **Deploy from a branch**, branch `main`, folder `/ (root)`, then **Save**.
-4. After a minute your app is at `https://<your-username>.github.io/stash/`.
+4. After a minute your app is at `https://<your-username>.github.io/Artify/` (live at https://arta2007.github.io/Artify/).
 
 ## Install on each iPhone
 
 1. Open the link in **Safari** (it must be Safari).
 2. Tap **Share › Add to Home Screen › Add**.
-3. Open **Stash** from the home screen, then tap **Add music** and pick files from the Files app.
+3. Open **Artify** from the home screen, then tap **Add music** and pick files from the Files app.
 
 From then on it works fully offline. Each phone has its own separate library.
 
@@ -63,12 +68,12 @@ Notes:
 
 ## Updating the app later
 
-Change the files, bump `CACHE` in `sw.js` (e.g. `stash-v2`), and upload again. Phones pick up the new version the next time the app is opened twice (once to download, once to use it).
+Change the files, commit and push. A Git hook in `.githooks/` bumps `CACHE` in `sw.js` automatically on every commit (enable it once per clone with `git config core.hooksPath .githooks`; if you edit on the GitHub website instead, bump it by hand). Phones pick up the new version on the second fresh launch (swipe the app away, open it again).
 
 ## Spotify playlist import setup
 
 1. Go to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard), log in, and click **Create app**.
-2. Under **Redirect URIs** add your app's exact URL, e.g. `https://<your-username>.github.io/stash/`. The app shows the exact value to copy under Settings › Import Spotify playlists.
+2. Under **Redirect URIs** add your app's exact URL, e.g. `https://arta2007.github.io/Artify/`. The app shows the exact value to copy under Settings › Import Spotify playlists.
 3. Tick **Web API**, save, and copy the **Client ID** into the app.
 4. Family members who want to import their own playlists must be added under **User Management** in the same Spotify app. Spotify limits development-mode apps to a small number of users and may change its rules for them.
 

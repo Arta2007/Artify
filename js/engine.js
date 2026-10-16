@@ -39,6 +39,7 @@ function makeDeck() {
   const el = document.createElement('audio');
   el.preload = 'auto';
   el.setAttribute('playsinline', '');
+  el.setAttribute('x-webkit-airplay', 'allow'); // lets iPhone offer AirPlay/Bluetooth outputs for this element
   el.preservesPitch = el.webkitPreservesPitch = el.mozPreservesPitch = true;
   document.body.appendChild(el);
   const deck = { el, url: null, src: null, gain: null, level: 1, unlocked: false };
@@ -391,6 +392,26 @@ export function fadeOutAndPause(seconds) {
       }
     }, 200);
   });
+}
+
+/**
+ * Lets the listener choose where the sound plays (Bluetooth headphones/speakers, AirPlay, built-in speaker).
+ * iPhone/Safari: the system output picker. Chrome/Edge/Firefox: the browser's speaker chooser.
+ * Returns 'picker' when a picker was shown, 'chosen' when an output was switched, or 'unsupported'.
+ */
+export async function chooseOutput() {
+  const e = cur().el;
+  if (typeof e.webkitShowPlaybackTargetPicker === 'function') {
+    e.webkitShowPlaybackTargetPicker();
+    return 'picker';
+  }
+  if (navigator.mediaDevices?.selectAudioOutput) {
+    const dev = await navigator.mediaDevices.selectAudioOutput();
+    for (const d of decks) await d.el.setSinkId?.(dev.deviceId);
+    if (ctx?.setSinkId) await ctx.setSinkId(dev.deviceId).catch(() => {});
+    return 'chosen';
+  }
+  return 'unsupported';
 }
 
 export function stop() {

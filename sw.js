@@ -1,5 +1,5 @@
 // Offline cache for the app shell. Bump CACHE when files change so phones pick up the new version.
-const CACHE = 'stash-v5';
+const CACHE = 'artify-v6';
 const RUNTIME = 'stash-runtime-v1'; // the AI library from the CDN, cached the first time it's used
 const ASSETS = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
@@ -15,13 +15,35 @@ self.addEventListener('install', e => {
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE && k !== RUNTIME && !k.startsWith('transformers')).map(k => caches.delete(k))))
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE && k !== RUNTIME && k !== SHARE && !k.startsWith('transformers')).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
 
+// Songs shared to Artify from other apps (Android / desktop Chrome "Share" menu) arrive as a POST.
+// Park the files in a cache, then open the app, which imports them.
+const SHARE = 'artify-shared';
+async function receiveShare(req) {
+  try {
+    const form = await req.formData();
+    const files = form.getAll('audio').filter(f => f && typeof f === 'object' && f.size);
+    const cache = await caches.open(SHARE);
+    let n = 0;
+    for (const f of files) {
+      await cache.put(new Request(`./shared/${Date.now()}-${n++}`), new Response(f, { headers: { 'Content-Type': f.type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(f.name || 'shared song') } }));
+    }
+    return Response.redirect(`./?shared=${n}`, 303);
+  } catch {
+    return Response.redirect('./?shared=error', 303);
+  }
+}
+
 self.addEventListener('fetch', e => {
   const req = e.request;
+  if (req.method === 'POST' && new URL(req.url).pathname.endsWith('/share-target')) {
+    e.respondWith(receiveShare(req));
+    return;
+  }
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
 

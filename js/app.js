@@ -56,11 +56,40 @@ const DEFAULTS = {
   enhanced: false, crossfade: 6, smartTransitions: true, skipSilence: true, leveling: true,
   eqMode: 'off', eqPreset: 'flat', eqCustom: new Array(10).fill(0), karaoke: false, effect: 'none',
   speed: 1, smartShuffle: true, aiLang: null,
+  theme: 'sky', // accent colour
+  bg: 'dark', // background style
   launch: 'home', // 'home' | 'quick': what the app shows when it opens
   quickPins: [], // [{ v, id }] shown as tiles on the quick page
 };
 const CFG = Object.assign({}, DEFAULTS, ls.get('settings', {}));
 const saveCfg = () => ls.set('settings', CFG);
+
+// ---------- themes ----------
+
+const THEMES = {
+  sky: { name: 'Sky', accent: '#4cc2ff' },
+  green: { name: 'Classic green', accent: '#1ed760' },
+  rose: { name: 'Rose', accent: '#ff5c8a' },
+  sunset: { name: 'Sunset', accent: '#ff9f43' },
+  violet: { name: 'Violet', accent: '#b18cff' },
+  gold: { name: 'Gold', accent: '#ffd34d' },
+  mint: { name: 'Mint', accent: '#3ddcb4' },
+  coral: { name: 'Coral', accent: '#ff7a6b' },
+};
+const BACKGROUNDS = {
+  dark: { name: 'Dark', desc: 'The classic look', v: { '--bg': '#121212', '--surface': '#181818', '--surface-2': '#242424', '--surface-3': '#2e2e2e', '--sheet': '#282828' } },
+  black: { name: 'True black', desc: 'Pure black, saves battery on OLED screens', v: { '--bg': '#000000', '--surface': '#0e0e0e', '--surface-2': '#1a1a1a', '--surface-3': '#262626', '--sheet': '#1c1c1c' } },
+  midnight: { name: 'Midnight', desc: 'Deep navy blue', v: { '--bg': '#0b1220', '--surface': '#111a2c', '--surface-2': '#1a2540', '--surface-3': '#24304d', '--sheet': '#1a2338' } },
+  plum: { name: 'Plum', desc: 'Dark purple', v: { '--bg': '#140f1c', '--surface': '#1c1526', '--surface-2': '#271e35', '--surface-3': '#322743', '--sheet': '#271e35' } },
+};
+
+function applyTheme() {
+  const root = document.documentElement.style;
+  root.setProperty('--accent', (THEMES[CFG.theme] || THEMES.sky).accent);
+  const bg = (BACKGROUNDS[CFG.bg] || BACKGROUNDS.dark).v;
+  for (const [k, v] of Object.entries(bg)) root.setProperty(k, v);
+  for (const m of document.querySelectorAll('meta[name="theme-color"]')) m.content = bg['--bg'];
+}
 
 // ---------- state ----------
 
@@ -922,16 +951,19 @@ const VIEWS = {
     const size = d.all.reduce((n, t) => n + (t.size || 0), 0);
     const row = (act, ic, title, sub, extra = '', attrs = '') => `<button class="set-row" data-act="${act}"${attrs}>${icon(ic)}<div><b>${title}</b><small${extra}>${sub}</small></div>${icon('chev', 'chev')}</button>`;
     return `${topbar('Settings', true)}<div class="pad">
-      <div class="profile"><div class="avatar">${icon('user')}</div><div><h1>Stash</h1><p>${plural(d.all.length, 'song')} · ${fmtBytes(size)}</p></div></div>
+      <div class="profile"><div class="avatar">${icon('user')}</div><div><h1>Artify</h1><p>${plural(d.all.length, 'song')} · ${fmtBytes(size)}</p></div></div>
       <div class="group"><h3>Listening</h3>
         ${row('nav', 'speaker', 'Sound', CFG.enhanced ? 'Enhanced audio on' : 'Equalizer, crossfade, effects, karaoke', '', ' data-v="sound"')}
         ${row('nav', 'eq', 'Equalizer', eqSummary(), '', ' data-v="eq"')}
         ${row('nav', 'stats', 'Your stats', 'Top songs, artists, genres and minutes listened', '', ' data-v="stats"')}
       </div>
+      <div class="group"><h3>Look</h3>
+        ${row('nav', 'sparkle', 'Theme', `${(THEMES[CFG.theme] || THEMES.sky).name} · ${(BACKGROUNDS[CFG.bg] || BACKGROUNDS.dark).name}`, '', ' data-v="theme"')}
+      </div>
       <div class="group"><h3>Quick page</h3>
         ${row('open-quick', 'apps', 'Open the quick page', 'Big one-tap tiles and a now-playing card, like a widget')}
-        <div class="set-row">${icon('sparkle')}<div><b>Open Stash on the quick page</b><small>Start on the quick page instead of Home when you tap the app icon</small></div>${sw('launch', CFG.launch === 'quick', 'launch-toggle')}</div>
-        <p class="hint" style="padding:6px 2px 0">Your lock screen already shows the song, cover, play/pause, skip and the progress bar while Stash plays.</p>
+        <div class="set-row">${icon('sparkle')}<div><b>Open Artify on the quick page</b><small>Start on the quick page instead of Home when you tap the app icon</small></div>${sw('launch', CFG.launch === 'quick', 'launch-toggle')}</div>
+        <p class="hint" style="padding:6px 2px 0">Your lock screen already shows the song, cover, play/pause, skip and the progress bar while Artify plays.</p>
       </div>
       <div class="group"><h3>Library</h3>
         <button class="set-row" data-act="add-files">${icon('plus')}<div><b>Add music files</b><small>MP3, M4A, AAC, FLAC, WAV · add .lrc files for lyrics</small></div></button>
@@ -949,7 +981,7 @@ const VIEWS = {
       <div class="group"><h3>Danger zone</h3>
         <button class="set-row danger" data-act="wipe">${icon('trash')}<div><b>Delete everything</b><small>Removes all songs, playlists and settings from this device</small></div></button>
       </div>
-      <p class="foot">Stash ${VERSION}<br>Your music never leaves this device.</p>
+      <p class="foot">Artify ${VERSION}<br>Your music never leaves this device.</p>
     </div>`;
   },
 
@@ -988,6 +1020,19 @@ const VIEWS = {
 
   eq() {
     return `${topbar('Equalizer', true)}<div class="pad">${eqEditorHTML()}</div>`;
+  },
+
+  theme() {
+    return `${topbar('Theme', true)}<div class="pad">
+      <div class="theme-preview"><div class="tp-head"><span class="avatar">${icon('user')}</span><b>Good evening</b></div>
+        <div class="tp-row"><div class="art sm">${icon('music')}</div><div><div class="tp-t">Now playing</div><div class="tp-s">Artist name</div></div><span class="play-big tp-play">${icon('play')}</span></div>
+        <div class="chips"><span class="chip on">Playlists</span><span class="chip">Albums</span></div></div>
+      <h3 class="eq-h">Colour</h3>
+      <div class="swatches">${Object.entries(THEMES).map(([k, t]) => `<button class="swatch${CFG.theme === k ? ' on' : ''}" data-act="set-theme" data-k="${k}" style="--c:${t.accent}" aria-label="${esc(t.name)}"><i></i><span>${esc(t.name)}</span></button>`).join('')}</div>
+      <h3 class="eq-h">Background</h3>
+      ${Object.entries(BACKGROUNDS).map(([k, b]) => `<button class="set-row bg-row${CFG.bg === k ? ' on' : ''}" data-act="set-bg" data-k="${k}"><span class="bg-dot" style="background:${b.v['--bg']};border-color:${b.v['--surface-3']}"></span><div><b>${esc(b.name)}</b><small>${esc(b.desc)}</small></div>${CFG.bg === k ? icon('check', 'liked') : ''}</button>`).join('')}
+      <p class="hint" style="padding:14px 2px">The home-screen icon stays light blue; iPhone doesn’t let web apps change their icon.</p>
+    </div>`;
   },
 
   stats(top) {
@@ -1073,7 +1118,7 @@ const VIEWS = {
 
   spotify() {
     const connected = sp.isConnected();
-    const hero = `<div class="sp-hero"><div class="badge-ic">${icon('link')}</div><h1>Import Spotify playlists</h1><p>Copies the names and track lists of your Spotify playlists. Songs you’ve added to Stash appear in them automatically, and the rest show as missing until you add the files. No audio comes from Spotify.</p></div>`;
+    const hero = `<div class="sp-hero"><div class="badge-ic">${icon('link')}</div><h1>Import Spotify playlists</h1><p>Copies the names and track lists of your Spotify playlists. Songs you’ve added to Artify appear in them automatically, and the rest show as missing until you add the files. No audio comes from Spotify.</p></div>`;
     if (connected) {
       return `${topbar('Spotify import', true)}<div class="pad">${hero}
         <div class="sp-acct">${icon('user')}<div>Connected as<b id="sp-acct">…</b></div><button class="btn-ghost" data-act="sp-disconnect">Disconnect</button></div>
@@ -1941,6 +1986,7 @@ function buildChrome() {
       <button class="icon-btn" id="np-repeat" data-act="repeat" aria-label="Repeat">${icon('repeat')}</button>
     </div>
     <div class="np-foot">
+      <button class="icon-btn" data-act="choose-output" aria-label="Choose speaker or Bluetooth device">${icon('devices')}</button>
       <button class="icon-btn" id="np-lyr-btn" data-act="np-lyrics" aria-label="Lyrics">${icon('lyrics')}</button>
       <button class="icon-btn" id="np-eq-btn" data-act="eq-sheet" aria-label="Equalizer">${icon('eq')}</button>
       <button class="icon-btn" id="np-speed-btn" data-act="speed-sheet" aria-label="Playback speed"></button>
@@ -2335,6 +2381,26 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && $('#car') && !wakeLock) navigator.wakeLock?.request('screen').then(l => { wakeLock = l; }).catch(() => {});
 });
 
+// ---------- songs shared from other apps (Android / desktop share menu) ----------
+
+async function importShared() {
+  const q = new URLSearchParams(location.search);
+  if (!q.has('shared')) return;
+  history.replaceState(null, '', location.pathname);
+  if (q.get('shared') === 'error' || !('caches' in window)) return toast('Couldn’t receive the shared song');
+  const cache = await caches.open('artify-shared');
+  const reqs = await cache.keys();
+  const files = [];
+  for (const r of reqs) {
+    const res = await cache.match(r);
+    const name = decodeURIComponent(res.headers.get('X-File-Name') || 'shared song');
+    files.push(new File([await res.blob()], name, { type: res.headers.get('Content-Type') || '' }));
+    await cache.delete(r);
+  }
+  if (files.length) importFiles(files);
+  else toast('Nothing to import from the share');
+}
+
 // ---------- quick page (widget-style launcher) ----------
 
 const MAX_PINS = 6;
@@ -2380,7 +2446,7 @@ function renderQuick() {
   const tiles = quickTiles();
   el.innerHTML = `<div class="quick-inner">
     <header><div><small>${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</small><h1>${greeting()}</h1></div>
-      <button class="btn-ghost" data-act="close-quick">Open Stash</button></header>
+      <button class="btn-ghost" data-act="close-quick">Open Artify</button></header>
     ${t ? `<div class="qw-now">
       <div class="qw-art">${artHTML(t.artKey)}</div>
       <div class="qw-meta"><div class="qw-t">${esc(t.title)}</div><div class="qw-s">${esc(t.artist || 'Unknown artist')}</div>
@@ -2389,7 +2455,7 @@ function renderQuick() {
       </div></div>` : `<div class="qw-now empty-now">${icon('music')}<div><b>Nothing playing</b><small>Tap a tile to start</small></div></div>`}
     <div class="qw-grid">${tiles.map(({ c, shuffle, label, pinned }) => `<button class="qw-tile" data-act="quick-play" data-v="${c.v}" data-id="${esc(c.id)}"${shuffle ? ' data-shuffle="1"' : ''}>
       ${ctxArt(c, 'sm')}<span>${esc(label || c.title)}</span>${shuffle ? icon('shuffle', 'qw-ic') : pinned ? icon('pin', 'qw-ic') : ''}</button>`).join('')}</div>
-    <p class="qw-hint">Pin playlists, albums or mixes here from their ··· menu. ${CFG.launch === 'quick' ? 'Stash opens on this page.' : '<button class="link" data-act="launch-quick">Open Stash on this page every time</button>'}</p>
+    <p class="qw-hint">Pin playlists, albums or mixes here from their ··· menu. ${CFG.launch === 'quick' ? 'Artify opens on this page.' : '<button class="link" data-act="launch-quick">Open Artify on this page every time</button>'}</p>
   </div>`;
   hydrate(el);
   updateProgress();
@@ -2402,7 +2468,7 @@ function openQuick() {
   el.id = 'quick';
   document.body.appendChild(el);
   renderQuick();
-  tintOf(cur()?.artKey).then(c => el.style.setProperty('--tint', c || '#1b3326'));
+  tintOf(cur()?.artKey).then(c => el.style.setProperty('--tint', c || 'var(--accent-deep)'));
 }
 const closeQuick = () => $('#quick')?.remove();
 
@@ -2475,7 +2541,7 @@ async function importFiles(fileList) {
     } catch (e) {
       console.error('Import failed for', f.name, e);
       failed++;
-      if (e?.name === 'QuotaExceededError') { toast('Your phone’s storage for Stash is full'); break; }
+      if (e?.name === 'QuotaExceededError') { toast('Your phone’s storage for Artify is full'); break; }
     }
   }
   // .lrc files picked on their own: match them to songs already in the library by file name or title.
@@ -2734,7 +2800,7 @@ function ctxMenu() {
 }
 
 function addMenu() {
-  menu('<div class="sheet-title">Add to your library</div>', [
+  menu(`<div class="sheet-title">Add to your library</div><p class="hint add-tip">${icon('import')}<span>Songs you receive by AirDrop or “Save to Files” are in <b>Files › Downloads</b>. Choose <b>Add music files</b> and open Downloads.</span></p>`, [
     { icon: 'import', label: 'Add music files', run: pickFiles },
     { icon: 'playlist-add', label: 'Create playlist', run: newPlaylist },
     { icon: 'sparkle', label: 'Create smart playlist', run: () => smartBuilder() },
@@ -3187,7 +3253,7 @@ async function runAnalysis() {
 function aiConsent() {
   if (CFG.aiLang != null || $('.sheet-wrap')) return;
   confirmSheet('Detect languages by listening?',
-    'Stash can listen to each song with an on-device AI to sort your music into language playlists (and spot instrumentals). It downloads a 77 MB model once (best on Wi-Fi); after that it works offline. Your music never leaves the phone.',
+    'Artify can listen to each song with an on-device AI to sort your music into language playlists (and spot instrumentals). It downloads a 77 MB model once (best on Wi-Fi); after that it works offline. Your music never leaves the phone.',
     'Download & detect', () => { CFG.aiLang = true; saveCfg(); runLang(); updateJobStatus(); },
     { danger: false, cancel: 'Not now (guess from titles)', onCancel: () => { CFG.aiLang = false; saveCfg(); updateJobStatus(); } });
 }
@@ -3391,10 +3457,10 @@ async function exportBackup({ tracks, playlists, full = false, name }) {
     for (const k of arts) { const a = await db.get('art', k); if (a) entries.push({ name: `art/${k}`, data: a }); }
     const zip = await writeZip(entries, (d, n) => prog.set(`Packing ${d} of ${n}…`, d / n));
     prog.done();
-    const fname = safeName(`Stash ${full ? 'backup' : name} ${today()}`) + '.zip';
+    const fname = safeName(`Artify ${full ? 'backup' : name} ${today()}`) + '.zip';
     shareFiles([new File([zip], fname, { type: 'application/zip' })], full ? 'Backup ready' : 'Ready to share',
       full ? 'Save it to Files or iCloud Drive. To restore, choose “Import a backup” in Your Library › +.'
-        : 'AirDrop or send it to a family member. They open Stash › Your Library › + › “Import a backup or shared playlist”.');
+        : 'AirDrop or send it to a family member. They open Artify › Your Library › + › “Import a backup or shared playlist”.');
   } catch (e) {
     console.error(e);
     prog.done();
@@ -3409,7 +3475,7 @@ async function importBackup(file) {
     meta = JSON.parse(await (await zip.get('stash.json').blob()).text());
     if (meta.app !== 'stash') throw new Error();
   } catch {
-    toast('That isn’t a Stash backup file');
+    toast('That isn’t an Artify backup file');
     return;
   }
   const go = async personal => {
@@ -3555,7 +3621,7 @@ async function resyncSpotify(p) {
 function showCodeScreen(code) {
   const el = document.createElement('div');
   el.className = 'codescreen';
-  el.innerHTML = `<h1>Almost there</h1><p>Spotify finished the login in a separate window. Copy this code, go back to Stash on your home screen, and paste it under <b>Settings › Import Spotify playlists</b>.</p>
+  el.innerHTML = `<h1>Almost there</h1><p>Spotify finished the login in a separate window. Copy this code, go back to Artify on your home screen, and paste it under <b>Settings › Import Spotify playlists</b>.</p>
     <code>${esc(code)}</code><button class="btn-primary" data-copy>Copy code</button><button class="sheet-item center" data-x>Close</button>`;
   document.body.appendChild(el);
   $('[data-copy]', el).onclick = () => navigator.clipboard?.writeText(code).then(() => toast('Code copied'), () => toast('Select the code and copy it'));
@@ -3586,15 +3652,27 @@ const ACTIONS = {
       setTimeout(jump, 1200); // again once the file has loaded its metadata
     }
   },
+  'choose-output': async () => {
+    if (!cur()) return toast('Play a song first, then pick where it plays');
+    try {
+      const r = await eng.chooseOutput();
+      if (r === 'chosen') toast('Output changed');
+      if (r === 'unsupported') toast('Choose your speaker or Bluetooth device from the system sound menu (Control Center on iPhone)', 4000);
+    } catch (e) {
+      if (e?.name !== 'AbortError' && e?.name !== 'NotAllowedError') toast('Couldn’t open the device picker', 3000);
+    }
+  },
+  'set-theme': el => { CFG.theme = el.dataset.k; saveCfg(); applyTheme(); refresh(); },
+  'set-bg': el => { CFG.bg = el.dataset.k; saveCfg(); applyTheme(); refresh(); },
   'open-quick': openQuick,
   'close-quick': closeQuick,
   'quick-play': quickPlay,
-  'launch-quick': () => { CFG.launch = 'quick'; saveCfg(); toast('Stash will open on the quick page'); renderQuick(); },
+  'launch-quick': () => { CFG.launch = 'quick'; saveCfg(); toast('Artify will open on the quick page'); renderQuick(); },
   'launch-toggle': el => {
     CFG.launch = CFG.launch === 'quick' ? 'home' : 'quick';
     saveCfg();
     el.classList.toggle('on', CFG.launch === 'quick');
-    toast(CFG.launch === 'quick' ? 'Stash will open on the quick page' : 'Stash will open on Home');
+    toast(CFG.launch === 'quick' ? 'Artify will open on the quick page' : 'Artify will open on Home');
   },
   'sf-sort': el => sortSheet(el.dataset.key, !!el.dataset.pl),
   'sf-filter': el => filterSheet(el.dataset.key),
@@ -3830,6 +3908,7 @@ function bindEvents() {
 // ---------- boot ----------
 
 async function init() {
+  applyTheme();
   buildChrome();
   setupAudio();
   bindEvents();
@@ -3858,7 +3937,8 @@ async function init() {
   }
   render();
   updatePlayerUI();
-  if (CFG.launch === 'quick' && S.tracks.size && !redirect) openQuick();
+  if (CFG.launch === 'quick' && S.tracks.size && !redirect && !location.search.includes('shared')) openQuick();
+  importShared().catch(e => console.warn('Shared import failed', e));
   setTimeout(() => {
     runAnalysis();
     if (CFG.aiLang === true) runLang();
@@ -3868,5 +3948,5 @@ async function init() {
 
 init().catch(e => {
   console.error(e);
-  $('#view').innerHTML = `<div class="empty"><h2>Stash couldn’t start</h2><p>${esc(e.message)}</p></div>`;
+  $('#view').innerHTML = `<div class="empty"><h2>Artify couldn’t start</h2><p>${esc(e.message)}</p></div>`;
 });

@@ -1,11 +1,20 @@
 {
-  "name": "Stash",
-  "short_name": "Stash",
+  "name": "Artify",
+  "short_name": "Artify",
   "description": "Your offline music library.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
+  "share_target": {
+    "action": "./share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "files": [{ "name": "audio", "accept": ["audio/*", ".mp3", ".m4a", ".aac", ".flac", ".wav", ".aif", ".aiff", ".ogg", ".opus", ".lrc"] }]
+    }
+  },
   "background_color": "#121212",
   "theme_color": "#121212",
   "icons": [
