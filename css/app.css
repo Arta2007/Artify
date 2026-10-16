@@ -576,6 +576,48 @@ textarea.input { resize: none; font-family: inherit; line-height: 1.4; }
 .sb-preview span { display: block; color: var(--sub); font-size: 13px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pick-pl input { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
 
+/* ---------- lyrics search ---------- */
+
+.lyr-hit .meta .s.lyr-line { color: #fff; font-size: 13.5px; margin-top: 3px; }
+.lyr-hit mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: #fff; border-radius: 3px; padding: 0 1px; }
+
+/* ---------- quick page ---------- */
+
+#quick {
+  --tint: #1b3326;
+  position: fixed; inset: 0; z-index: 65; overflow-y: auto;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--tint) 75%, #000) 0, #121212 70%);
+  display: flex; justify-content: center;
+}
+.quick-inner { width: 100%; max-width: 680px; padding: calc(var(--st) + 14px) 16px calc(var(--sb) + 24px); }
+.quick-inner header { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.quick-inner header small { color: rgba(255, 255, 255, .7); font-size: 13px; font-weight: 600; }
+.quick-inner header h1 { font-size: 30px; font-weight: 800; letter-spacing: -.6px; margin-top: 2px; }
+.qw-now { display: flex; gap: 14px; align-items: center; padding: 14px; border-radius: 22px; background: rgba(255, 255, 255, .1); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); }
+.qw-art .art { width: 118px; height: 118px; border-radius: 14px; }
+.qw-meta { flex: 1; min-width: 0; }
+.qw-t { font-size: 19px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qw-s { color: rgba(255, 255, 255, .72); font-size: 14px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qw-prog { height: 4px; background: rgba(255, 255, 255, .22); border-radius: 2px; margin: 12px 0 8px; overflow: hidden; }
+.qw-prog i { display: block; height: 100%; width: 0; background: #fff; }
+.qw-ctrls { display: flex; align-items: center; justify-content: space-between; }
+.qw-ctrls button { width: 44px; height: 44px; display: grid; place-items: center; color: #fff; border-radius: 50%; }
+.qw-ctrls button .ic { width: 26px; height: 26px; }
+.qw-ctrls .qw-play { width: 52px; height: 52px; background: #fff; color: #000; }
+.qw-ctrls .liked { color: var(--accent); }
+.qw-now.empty-now { color: rgba(255, 255, 255, .8); gap: 12px; }
+.qw-now.empty-now .ic { width: 34px; height: 34px; }
+.qw-now.empty-now b { display: block; font-size: 16px; }
+.qw-now.empty-now small { color: rgba(255, 255, 255, .6); }
+.qw-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+.qw-tile { position: relative; display: flex; align-items: center; gap: 10px; min-height: 76px; padding: 10px; border-radius: 16px; background: rgba(255, 255, 255, .08); text-align: left; font-weight: 700; font-size: 14px; }
+.qw-tile:active { background: rgba(255, 255, 255, .16); transform: scale(.98); }
+.qw-tile .art.sm { width: 56px; height: 56px; border-radius: 10px; }
+.qw-tile span { flex: 1; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.qw-tile .qw-ic { position: absolute; top: 8px; right: 8px; width: 15px; height: 15px; color: var(--accent); }
+.qw-hint { color: rgba(255, 255, 255, .55); font-size: 13px; text-align: center; margin: 18px 8px 0; line-height: 1.5; }
+.link { color: var(--accent); font-weight: 700; text-decoration: underline; }
+
 /* ---------- car mode ---------- */
 
 #car {

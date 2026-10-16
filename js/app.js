@@ -56,6 +56,8 @@ const DEFAULTS = {
   enhanced: false, crossfade: 6, smartTransitions: true, skipSilence: true, leveling: true,
   eqMode: 'off', eqPreset: 'flat', eqCustom: new Array(10).fill(0), karaoke: false, effect: 'none',
   speed: 1, smartShuffle: true, aiLang: null,
+  launch: 'home', // 'home' | 'quick': what the app shows when it opens
+  quickPins: [], // [{ v, id }] shown as tiles on the quick page
 };
 const CFG = Object.assign({}, DEFAULTS, ls.get('settings', {}));
 const saveCfg = () => ls.set('settings', CFG);
@@ -166,6 +168,7 @@ function derived() {
 function changed() {
   D = null;
   ACTS = null;
+  LYR = null; // songs added/removed/merged: rebuild the lyrics search index next time
   rematchAll();
 }
 
@@ -575,6 +578,7 @@ const topOf = () => S.stacks[S.tab].at(-1);
 function navigate(v, id) {
   closeNP();
   closeCar();
+  closeQuick();
   const stack = S.stacks[S.tab];
   stack.at(-1).scroll = $('#view').scrollTop;
   stack.push({ v, id });
@@ -822,7 +826,7 @@ function quickItems() {
 const VIEWS = {
   home() {
     const d = derived();
-    const head = `<header class="page-head"><button class="avatar" data-act="nav" data-v="settings" aria-label="Settings">${icon('user')}</button><h1>${greeting()}</h1><button class="icon-btn" data-act="nav" data-v="stats" aria-label="Your stats">${icon('stats')}</button></header>`;
+    const head = `<header class="page-head"><button class="avatar" data-act="nav" data-v="settings" aria-label="Settings">${icon('user')}</button><h1>${greeting()}</h1><button class="icon-btn" data-act="open-quick" aria-label="Quick page">${icon('apps')}</button><button class="icon-btn" data-act="nav" data-v="stats" aria-label="Your stats">${icon('stats')}</button></header>`;
     if (!d.all.length) return `<div class="home">${head}${emptyLibrary()}</div>`;
     const quick = quickItems().map(c => `<button class="quick" data-act="nav" data-v="${c.v}" data-id="${esc(c.id)}">${ctxArt(c)}<span>${esc(c.title)}</span></button>`).join('');
     const a = autoLists();
@@ -845,7 +849,7 @@ const VIEWS = {
 
   search() {
     return `<header class="page-head"><h1>Search</h1></header>
-      <div class="search-wrap"><label class="search-box">${icon('search')}<input id="q" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Songs, artists, memories…" value="${esc(S.query)}"><button class="clear" data-act="clear-q" aria-label="Clear"${S.query ? '' : ' hidden'}>${icon('close')}</button></label></div>
+      <div class="search-wrap"><label class="search-box">${icon('search')}<input id="q" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Songs, artists, lyrics, memories…" value="${esc(S.query)}"><button class="clear" data-act="clear-q" aria-label="Clear"${S.query ? '' : ' hidden'}>${icon('close')}</button></label></div>
       <div id="results">${searchResults()}</div>`;
   },
 
@@ -923,6 +927,11 @@ const VIEWS = {
         ${row('nav', 'speaker', 'Sound', CFG.enhanced ? 'Enhanced audio on' : 'Equalizer, crossfade, effects, karaoke', '', ' data-v="sound"')}
         ${row('nav', 'eq', 'Equalizer', eqSummary(), '', ' data-v="eq"')}
         ${row('nav', 'stats', 'Your stats', 'Top songs, artists, genres and minutes listened', '', ' data-v="stats"')}
+      </div>
+      <div class="group"><h3>Quick page</h3>
+        ${row('open-quick', 'apps', 'Open the quick page', 'Big one-tap tiles and a now-playing card, like a widget')}
+        <div class="set-row">${icon('sparkle')}<div><b>Open Stash on the quick page</b><small>Start on the quick page instead of Home when you tap the app icon</small></div>${sw('launch', CFG.launch === 'quick', 'launch-toggle')}</div>
+        <p class="hint" style="padding:6px 2px 0">Your lock screen already shows the song, cover, play/pause, skip and the progress bar while Stash plays.</p>
       </div>
       <div class="group"><h3>Library</h3>
         <button class="set-row" data-act="add-files">${icon('plus')}<div><b>Add music files</b><small>MP3, M4A, AAC, FLAC, WAV · add .lrc files for lyrics</small></div></button>
@@ -1317,10 +1326,11 @@ function searchResults() {
   const genres = d.genres.filter(g => has(g.name)).slice(0, 6);
   const al = autoLists();
   const autos = [...al.daily, ...al.smart, ...al.fam, ...al.mood, ...al.lang].filter(c => has(c.title));
+  const lyrSlot = q.length >= 2 ? '<div id="lyr-results"></div>' : '';
   if (!songs.length && !artists.length && !albums.length && !pls.length && !genres.length && !autos.length) {
-    return `<div class="empty small"><h3>No results for “${esc(S.query.trim())}”</h3><p class="hint">Check the spelling, or try different keywords.</p></div>`;
+    return `<div class="empty small" id="no-results"><h3>No results for “${esc(S.query.trim())}”</h3><p class="hint">Check the spelling, or try different keywords.</p></div>${lyrSlot}`;
   }
-  let html = '';
+  let html = lyrSlot;
   if (songs.length) {
     const L2 = regList(songs.map(t => t.id), null);
     html += `<h2 class="sec-h">Songs</h2>` + songs.map((t, i) => songRow(t, L2, i, { sub: t => (t.memory?.text && has(t.memory.text) ? `Memory · ${t.memory.text}` : `Song · ${t.artist || 'Unknown artist'}`) })).join('');
@@ -1339,6 +1349,77 @@ function updateResults() {
   hydrate(r);
   const clear = $('.search-box .clear');
   if (clear) clear.hidden = !S.query;
+  syncPlayState();
+  fillLyricResults();
+}
+
+// ---------- lyrics search ----------
+
+let LYR = null; // [{ id, lines: [{t, text}], folded: [] }], built on first search
+const resetLyricsIndex = () => { LYR = null; };
+
+async function lyricsIndex() {
+  if (LYR) return LYR;
+  const out = [];
+  for (const t of S.tracks.values()) {
+    if (!t.hasLyrics) continue;
+    const data = parseLyrics(await db.get('lyrics', t.id).catch(() => null));
+    if (data) out.push({ id: t.id, lines: data.lines, folded: data.lines.map(l => fold(l.text)) });
+  }
+  return (LYR = out);
+}
+
+/** Songs whose lyrics contain the words you typed, with the first matching line. */
+async function searchLyrics(q) {
+  const words = q.split(/\s+/).filter(Boolean);
+  const hits = [];
+  for (const e of await lyricsIndex()) {
+    const t = S.tracks.get(e.id);
+    if (!t) continue;
+    // Best match first: the exact phrase in a line, then all words in one line, then words spread over two lines.
+    let at = e.folded.findIndex(l => l.includes(q));
+    if (at < 0 && words.length > 1) at = e.folded.findIndex(l => words.every(w => l.includes(w)));
+    if (at < 0 && words.length > 1) {
+      at = e.folded.findIndex((l, i) => l.includes(words[0]) && words.every(w => (l + ' ' + (e.folded[i + 1] || '')).includes(w)));
+    }
+    if (at < 0) continue;
+    const more = e.folded.filter(l => words.every(w => l.includes(w))).length - 1;
+    hits.push({ t, line: e.lines[at], more: Math.max(0, more) });
+    if (hits.length >= 30) break;
+  }
+  return hits;
+}
+
+function highlight(text, q) {
+  const words = q.split(/\s+/).filter(Boolean);
+  const f = fold(text);
+  // fold() keeps lengths for most scripts; fall back to no highlight if it doesn't.
+  if (f.length !== text.length) return esc(text);
+  const marks = new Array(text.length).fill(false);
+  for (const w of words) { let i = f.indexOf(w); while (i >= 0) { for (let k = i; k < i + w.length; k++) marks[k] = true; i = f.indexOf(w, i + w.length); } }
+  let out = '';
+  for (let i = 0; i < text.length; i++) {
+    if (marks[i] && !marks[i - 1]) out += '<mark>';
+    out += esc(text[i]);
+    if (marks[i] && !marks[i + 1]) out += '</mark>';
+  }
+  return out;
+}
+
+let lyrSeq = 0;
+async function fillLyricResults() {
+  const slot = $('#lyr-results');
+  const q = fold(S.query.trim());
+  if (!slot || q.length < 2) return;
+  const seq = ++lyrSeq;
+  const hits = await searchLyrics(q);
+  if (seq !== lyrSeq || !slot.isConnected) return;
+  if (!hits.length) return;
+  $('#no-results')?.remove();
+  const L2 = regList(hits.map(h => h.t.id), null);
+  slot.innerHTML = `<h2 class="sec-h">In lyrics</h2>` + hits.map((h, i) => `<div class="row song lyr-hit" data-act="lyr-play" data-list="${L2}" data-i="${i}" data-tid="${h.t.id}"${h.line.t != null ? ` data-t="${h.line.t}"` : ''}>
+    ${artHTML(h.t.artKey, 'sm')}<div class="meta"><div class="t">${esc(h.t.title)}</div><div class="s lyr-line"><span class="txt">“${highlight(h.line.text, q)}”</span></div><div class="s"><span class="txt">${esc(h.t.artist || 'Unknown artist')}${h.line.t != null ? ` · at ${fmtTime(h.line.t)}` : ''}${h.more ? ` · ${plural(h.more, 'more line')}` : ''}</span></div></div></div>`).join('');
+  hydrate(slot);
   syncPlayState();
 }
 
@@ -1726,6 +1807,7 @@ function updatePlayerUI() {
   updateLoopUI();
   updateSleepUI();
   if ($('#car')) updateCar();
+  if ($('#quick') && $('#quick').dataset.tid !== t.id) { $('#quick').dataset.tid = t.id; renderQuick(); }
   tintOf(t.artKey).then(c => {
     const col = c || '#535353';
     mini.style.setProperty('--tint', col);
@@ -1763,6 +1845,8 @@ function updateProgress() {
   $('#np-dur').textContent = fmtTime(dur);
   const cp = $('#car-bar');
   if (cp) cp.style.width = `${frac * 100}%`;
+  const qb = $('#qw-bar');
+  if (qb) qb.style.width = `${frac * 100}%`;
 }
 
 async function setMediaSession(t) {
@@ -2024,6 +2108,7 @@ async function saveLyrics(t, text) {
   await db.put('lyrics', text, t.id);
   t.hasLyrics = true;
   await db.put('tracks', t);
+  resetLyricsIndex();
   if (t === cur()) loadLyrics(t);
   return data;
 }
@@ -2249,6 +2334,86 @@ function closeCar() {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && $('#car') && !wakeLock) navigator.wakeLock?.request('screen').then(l => { wakeLock = l; }).catch(() => {});
 });
+
+// ---------- quick page (widget-style launcher) ----------
+
+const MAX_PINS = 6;
+const isPinned = (v, id) => CFG.quickPins.some(p => p.v === v && String(p.id) === String(id));
+function togglePin(v, id) {
+  if (isPinned(v, id)) {
+    CFG.quickPins = CFG.quickPins.filter(p => !(p.v === v && String(p.id) === String(id)));
+    toast('Removed from the quick page');
+  } else {
+    if (CFG.quickPins.length >= MAX_PINS) return toast(`The quick page holds ${MAX_PINS} pins. Unpin one first.`);
+    CFG.quickPins.push({ v, id });
+    toast('Pinned to the quick page');
+  }
+  saveCfg();
+  if ($('#quick')) renderQuick();
+}
+
+/** The tiles: pins first, then handy defaults (shuffle liked/all, today's mixes, recent). */
+function quickTiles() {
+  const tiles = [];
+  const seen = new Set();
+  const add = (v, id, opts = {}) => {
+    const k = `${v}|${id}|${opts.shuffle ? 's' : ''}`;
+    if (seen.has(k)) return;
+    const c = ctxOf(v, id);
+    if (!c || !c.tracks.length) return;
+    seen.add(k);
+    tiles.push({ c, ...opts });
+  };
+  for (const p of CFG.quickPins) add(p.v, p.id, { pinned: true });
+  add('liked', 'liked', { shuffle: true, label: 'Shuffle Liked Songs' });
+  add('songs', 'songs', { shuffle: true, label: 'Shuffle everything' });
+  for (const m of dailyMixes().slice(0, 2)) add('auto', 'daily:' + m.id);
+  for (const r of S.recent) { if (tiles.length >= 8) break; add(r.v, r.id); }
+  return tiles.slice(0, 8);
+}
+
+function renderQuick() {
+  const el = $('#quick');
+  if (!el) return;
+  const t = cur();
+  const playing = !!t && !eng.paused();
+  const tiles = quickTiles();
+  el.innerHTML = `<div class="quick-inner">
+    <header><div><small>${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</small><h1>${greeting()}</h1></div>
+      <button class="btn-ghost" data-act="close-quick">Open Stash</button></header>
+    ${t ? `<div class="qw-now">
+      <div class="qw-art">${artHTML(t.artKey)}</div>
+      <div class="qw-meta"><div class="qw-t">${esc(t.title)}</div><div class="qw-s">${esc(t.artist || 'Unknown artist')}</div>
+        <div class="qw-prog"><i id="qw-bar"></i></div>
+        <div class="qw-ctrls"><button data-act="prev" aria-label="Previous">${icon('prev')}</button><button class="qw-play" data-act="toggle" data-play-icon aria-label="Play or pause">${icon(playing ? 'pause' : 'play')}</button><button data-act="next" aria-label="Next">${icon('next')}</button><button data-act="like-cur" aria-label="Like" class="${t.liked ? 'liked' : ''}">${icon(t.liked ? 'heart-fill' : 'heart')}</button></div>
+      </div></div>` : `<div class="qw-now empty-now">${icon('music')}<div><b>Nothing playing</b><small>Tap a tile to start</small></div></div>`}
+    <div class="qw-grid">${tiles.map(({ c, shuffle, label, pinned }) => `<button class="qw-tile" data-act="quick-play" data-v="${c.v}" data-id="${esc(c.id)}"${shuffle ? ' data-shuffle="1"' : ''}>
+      ${ctxArt(c, 'sm')}<span>${esc(label || c.title)}</span>${shuffle ? icon('shuffle', 'qw-ic') : pinned ? icon('pin', 'qw-ic') : ''}</button>`).join('')}</div>
+    <p class="qw-hint">Pin playlists, albums or mixes here from their ··· menu. ${CFG.launch === 'quick' ? 'Stash opens on this page.' : '<button class="link" data-act="launch-quick">Open Stash on this page every time</button>'}</p>
+  </div>`;
+  hydrate(el);
+  updateProgress();
+}
+
+function openQuick() {
+  if ($('#quick')) return;
+  closeNP();
+  const el = document.createElement('div');
+  el.id = 'quick';
+  document.body.appendChild(el);
+  renderQuick();
+  tintOf(cur()?.artKey).then(c => el.style.setProperty('--tint', c || '#1b3326'));
+}
+const closeQuick = () => $('#quick')?.remove();
+
+function quickPlay(el) {
+  const c = ctxOf(el.dataset.v, el.dataset.id);
+  if (!c?.tracks.length) return;
+  const ids = c.tracks.map(t => t.id);
+  if (el.dataset.shuffle) { S.shuffle = true; ls.set('shuffle', true); }
+  startQueue(ids, S.shuffle ? Math.floor(Math.random() * ids.length) : 0, { v: c.v, id: c.id });
+  setTimeout(renderQuick, 300);
+}
 
 // ---------- library actions ----------
 
@@ -2500,7 +2665,7 @@ function songMenu(tid, pi, fromNP = false) {
     fromNP && { icon: 'mic', label: CFG.karaoke ? 'Turn karaoke off' : 'Karaoke mode', on: CFG.karaoke, badge: CFG.enhanced ? '' : 'Enhanced audio', run: () => { if (!CFG.enhanced) setCfg('enhanced', true); setCfg('karaoke', !CFG.karaoke); toast(CFG.karaoke ? 'Karaoke on: vocals reduced' : 'Karaoke off'); } },
     { icon: 'note', label: t.memory?.text ? 'Edit memory' : 'Add a memory', run: () => memorySheet(t) },
     { icon: 'lyrics', label: t.hasLyrics ? 'Replace lyrics' : 'Add lyrics (.lrc or text)', run: () => pickLyrics(t) },
-    t.hasLyrics && { icon: 'close', label: 'Remove lyrics', run: async () => { await db.del('lyrics', t.id); t.hasLyrics = false; await db.put('tracks', t); if (t === cur()) loadLyrics(t); toast('Lyrics removed'); } },
+    t.hasLyrics && { icon: 'close', label: 'Remove lyrics', run: async () => { await db.del('lyrics', t.id); t.hasLyrics = false; await db.put('tracks', t); resetLyricsIndex(); if (t === cur()) loadLyrics(t); toast('Lyrics removed'); } },
     top.v !== 'album' && { icon: 'album', label: 'Go to album', run: () => navigate('album', albumKey(t)) },
     ...artistsOf(t).slice(0, 3).filter(a => !(top.v === 'artist' && top.id === a)).map(a => ({ icon: 'user', label: `Go to ${a}`, run: () => navigate('artist', a) })),
     { icon: 'eq', label: 'Equalizer for this song', run: () => { if (t !== cur()) { toast('Play the song to tune its EQ'); return; } eqSheet(); } },
@@ -2552,6 +2717,7 @@ function ctxMenu() {
     p && { icon: 'image', label: 'Change cover', run: () => pickCover(p) },
     p?.customArt && { icon: 'close', label: 'Use automatic cover', run: () => removeCover(p) },
     p && { icon: 'edit', label: 'Rename playlist', run: () => promptSheet('Rename playlist', p.name, 'Save', name => { p.name = name; p.updated = Date.now(); db.put('playlists', p); refresh(); }) },
+    has && top.v !== 'radio' && { icon: 'pin', on: isPinned(top.v, top.id), label: isPinned(top.v, top.id) ? 'Unpin from the quick page' : 'Pin to the quick page', run: () => togglePin(top.v, top.id) },
     has && (p || top.v === 'album') && { icon: 'backup', label: 'Share with family (songs included)', run: () => exportBackup({ tracks: c.tracks, playlists: p ? [p] : [], name: c.title }) },
     has && { icon: 'share', label: 'Save all to Files / Share', run: () => exportTracks(c.tracks) },
     p && { icon: 'trash', label: 'Delete playlist', danger: true, run: () => confirmSheet('Delete playlist?', `“${esc(p.name)}” will be deleted. The songs stay in your library.`, 'Delete', async () => {
@@ -3407,6 +3573,29 @@ const ACTIONS = {
   'add-files': pickFiles,
   'new-playlist': newPlaylist,
   'add-songs': () => { const p = S.playlists.get(topOf().id); if (p) songPicker(p); },
+  'lyr-play': el => {
+    // Play the song straight from the matching line (synced lyrics), like jumping to a quote.
+    const l = lists[+el.dataset.list];
+    if (!l) return;
+    startQueue(l.ids, +el.dataset.i, null);
+    if (el.dataset.t != null) {
+      const at = Math.max(0, +el.dataset.t - 1);
+      const id = el.dataset.tid;
+      const jump = () => { if (cur()?.id === id) eng.seek(at); };
+      setTimeout(jump, 400);
+      setTimeout(jump, 1200); // again once the file has loaded its metadata
+    }
+  },
+  'open-quick': openQuick,
+  'close-quick': closeQuick,
+  'quick-play': quickPlay,
+  'launch-quick': () => { CFG.launch = 'quick'; saveCfg(); toast('Stash will open on the quick page'); renderQuick(); },
+  'launch-toggle': el => {
+    CFG.launch = CFG.launch === 'quick' ? 'home' : 'quick';
+    saveCfg();
+    el.classList.toggle('on', CFG.launch === 'quick');
+    toast(CFG.launch === 'quick' ? 'Stash will open on the quick page' : 'Stash will open on Home');
+  },
   'sf-sort': el => sortSheet(el.dataset.key, !!el.dataset.pl),
   'sf-filter': el => filterSheet(el.dataset.key),
   'pl-reorder': () => startReorder(),
@@ -3626,7 +3815,7 @@ function bindEvents() {
   document.addEventListener('keydown', e => {
     if (e.target.closest('input, textarea, select')) return;
     if (e.code === 'Space') { e.preventDefault(); toggle(); }
-    if (e.key === 'Escape') { const sh = [...$$('.sheet-wrap.open')].at(-1); if (sh) sh.querySelector('[data-close]').click(); else if ($('#car')) closeCar(); else closeNP(); }
+    if (e.key === 'Escape') { const sh = [...$$('.sheet-wrap.open')].at(-1); if (sh) sh.querySelector('[data-close]').click(); else if ($('#car')) closeCar(); else if ($('#quick')) closeQuick(); else closeNP(); }
   });
   document.addEventListener('dragover', e => e.preventDefault());
   document.addEventListener('drop', e => {
@@ -3669,6 +3858,7 @@ async function init() {
   }
   render();
   updatePlayerUI();
+  if (CFG.launch === 'quick' && S.tracks.size && !redirect) openQuick();
   setTimeout(() => {
     runAnalysis();
     if (CFG.aiLang === true) runLang();

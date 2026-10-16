@@ -14,7 +14,8 @@ No server, no build step, no accounts. It's plain HTML/CSS/JS.
 - **Clean up song info**: removes "(Official Video) [HD]" and the like, moves "feat." credits into the artist, fills missing genres
 - **Find duplicates**: keeps the best-quality copy and merges likes, plays and playlists
 - **Song memories**: attach a note to any song; it shows in Now Playing and is searchable
-- **Synced lyrics** from .lrc files you add (or lyrics embedded in the file)
+- **Synced lyrics** from .lrc files you add (or lyrics embedded in the file), and **lyrics search**: type a line in Search to find the song and play it from that line
+- **Quick page**: a widget-style screen with a now-playing card and big one-tap tiles (shuffle Liked, shuffle everything, today's mixes, and up to 6 pinned playlists/albums/mixes). Pin from any ··· menu; optionally open Stash on it every time. The lock screen shows the cover, play/pause, skip and progress while music plays. (iPhone doesn't allow real home-screen widgets or Siri Shortcuts for web apps.)
 - **Backup & family sharing**: export the library or a playlist (songs included) as one .zip, import it on another phone
 - **Save to Files / Share**: MP3s get the edited tags, cover and lyrics written into the file
 - **Spotify playlist import** (Settings › Import Spotify playlists): copies playlist names and track lists only

@@ -1,5 +1,5 @@
 // Offline cache for the app shell. Bump CACHE when files change so phones pick up the new version.
-const CACHE = 'stash-v4';
+const CACHE = 'stash-v5';
 const RUNTIME = 'stash-runtime-v1'; // the AI library from the CDN, cached the first time it's used
 const ASSETS = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
