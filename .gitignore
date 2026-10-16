@@ -1,0 +1,19 @@
+# Local tooling (not part of the app)
+.claude/
+node_modules/
+
+# Never upload music, test media or backups
+_testmedia/
+*.mp3
+*.m4a
+*.flac
+*.wav
+*.aac
+*.ogg
+*.zip
+*.lrc
+
+# OS clutter
+.DS_Store
+Thumbs.db
+desktop.ini

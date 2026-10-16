@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>Stash</title>
+  <meta name="description" content="Your offline music library.">
+  <meta name="theme-color" content="#121212">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Stash">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div id="app">
+    <div id="statusbar"></div>
+    <main id="view"></main>
+    <div id="dock">
+      <div id="mini" hidden></div>
+      <nav id="tabs"></nav>
+    </div>
+  </div>
+  <section id="np" aria-hidden="true"></section>
+  <div id="sheets"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <input type="file" id="file-input" accept="audio/*,.mp3,.m4a,.aac,.flac,.wav,.aif,.aiff,.ogg,.opus,.lrc" multiple hidden>
+  <input type="file" id="image-input" accept="image/*" hidden>
+  <input type="file" id="lyrics-input" hidden>
+  <input type="file" id="backup-input" accept=".zip,application/zip" hidden>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
