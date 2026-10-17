@@ -1063,7 +1063,7 @@ const VIEWS = {
   search() {
     return `<header class="page-head"><h1>Search</h1></header>
       <div class="search-wrap"><label class="search-box">${icon('search')}<input id="q" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Songs, artists, lyrics, memories…" value="${esc(S.query)}"><button class="clear" data-act="clear-q" aria-label="Clear"${S.query ? '' : ' hidden'}>${icon('close')}</button></label></div>
-      <div id="results">${searchResults()}</div>`;
+      <div id="results">${searchResults()}</div><div id="web-results"></div>`;
   },
 
   library() {
@@ -1078,7 +1078,7 @@ const VIEWS = {
       body = navRow('liked', 'liked', likedArt('sm'), 'Liked Songs', `Playlist · ${plural(liked.tracks.length, 'song')}`);
       if (S.history.length || S.listen) body += navRow('history', 'history', `<div class="art sm hist-art">${icon('timer')}</div>`, 'Recently played', 'Your listening history');
       const missN = missingSongs('all').length;
-      if (missN) body += navRow('missing', 'all', `<div class="art sm miss-art">${icon('search')}</div>`, 'Missing songs', `${plural(missN, 'song')} from your Spotify playlists to get`);
+      if (missN) body += navRow('missing', 'all', `<div class="art sm miss-art">${icon('search')}</div>`, 'Missing songs', `${plural(missN, 'song')} to get`);
       for (const fo of S.folders) body += folderRow(fo);
       const inFolder = new Set(S.folders.map(x => x.id));
       for (const p of [...S.playlists.values()].filter(p => !inFolder.has(p.folderId)).sort((a, b) => (b.updated || 0) - (a.updated || 0))) body += playlistRow(p);
@@ -1588,6 +1588,7 @@ function updateResults() {
   if (clear) clear.hidden = !S.query;
   syncPlayState();
   fillLyricResults();
+  scheduleWebSearch();
 }
 
 // ---------- lyrics search ----------
@@ -1658,6 +1659,166 @@ async function fillLyricResults() {
     ${artHTML(h.t.artKey, 'sm')}<div class="meta"><div class="t">${esc(h.t.title)}</div><div class="s lyr-line"><span class="txt">“${highlight(h.line.text, q)}”</span></div><div class="s"><span class="txt">${esc(h.t.artist || 'Unknown artist')}${h.line.t != null ? ` · at ${fmtTime(h.line.t)}` : ''}${h.more ? ` · ${plural(h.more, 'more line')}` : ''}</span></div></div></div>`).join('');
   hydrate(slot);
   syncPlayState();
+}
+
+// ---------- search on the internet (Apple's free iTunes Search API: song info, covers and 30-second previews) ----------
+
+const webCache = new Map(); // query → results, so typing back and forth doesn't search again
+let webSeq = 0;
+let webTimer = null;
+let webReg = []; // results on screen, so taps can find them
+let webLimit = 20;
+
+/** iTunes result → the same shape as a Spotify song in the missing list (plus cover, preview and store link). */
+const fromITunes = r => ({
+  title: r.trackName,
+  artists: smart.splitArtists(r.artistName),
+  album: r.collectionName || '',
+  durationMs: r.trackTimeMillis || 0,
+  year: (r.releaseDate || '').slice(0, 4),
+  genre: r.primaryGenreName || '',
+  art: (r.artworkUrl100 || '').replace(/\/100x100bb\./, '/300x300bb.'),
+  preview: r.previewUrl || '',
+  url: r.trackViewUrl || '',
+  explicit: r.trackExplicitness === 'explicit',
+  webId: r.trackId,
+});
+
+async function webSearch(q, limit) {
+  const key = `${q.toLowerCase()}|${limit}`;
+  if (webCache.has(key)) return webCache.get(key);
+  const url = `https://itunes.apple.com/search?media=music&entity=song&limit=${limit}&term=${encodeURIComponent(q)}`;
+  const res = await fetch(url);
+  if (res.status === 403 || res.status === 429) throw new Error('busy');
+  if (!res.ok) throw new Error('http ' + res.status);
+  const data = await res.json();
+  const seen = new Set();
+  const list = (data.results || []).filter(r => r.kind === 'song' && r.trackName).map(fromITunes)
+    .filter(s => { const k = missKey(s); if (seen.has(k)) return false; seen.add(k); return true; }); // same song on several albums
+  webCache.set(key, list);
+  if (webCache.size > 60) webCache.delete(webCache.keys().next().value);
+  return list;
+}
+
+const webArt = (url, cls = 'sm') => (url ? `<div class="art ${cls} web-art"><img src="${esc(url)}" alt="" loading="lazy" decoding="async"></div>` : artHTML(null, cls));
+
+function scheduleWebSearch() {
+  clearTimeout(webTimer);
+  const slot = $('#web-results');
+  if (!slot) return;
+  const q = S.query.trim();
+  if (q.length < 2) { webSeq++; slot.innerHTML = ''; webLimit = 20; return; }
+  if (!navigator.onLine) {
+    slot.innerHTML = `<h2 class="sec-h">On the internet</h2><p class="hint">You’re offline. Connect to search for songs online.</p>`;
+    return;
+  }
+  if (slot.dataset.q !== q) webLimit = 20;
+  webTimer = setTimeout(fillWebResults, 550); // wait until typing pauses (Apple allows ~20 searches a minute)
+}
+
+async function fillWebResults() {
+  const slot = $('#web-results');
+  const q = S.query.trim();
+  if (!slot || q.length < 2) return;
+  const seq = ++webSeq;
+  if (slot.dataset.q !== q || !slot.innerHTML) slot.innerHTML = `<h2 class="sec-h">On the internet</h2><p class="hint web-wait">Searching…</p>`;
+  let list;
+  try {
+    list = await webSearch(q, webLimit);
+  } catch (e) {
+    if (seq !== webSeq || !slot.isConnected) return;
+    slot.dataset.q = '';
+    slot.innerHTML = `<h2 class="sec-h">On the internet</h2><p class="hint">${e.message === 'busy' ? 'Too many searches. Wait a minute and try again.' : 'Couldn’t search right now. Check the connection.'}</p><div class="pad"><button class="btn-ghost" data-act="web-retry">Try again</button></div>`;
+    return;
+  }
+  if (seq !== webSeq || !slot.isConnected) return;
+  slot.dataset.q = q;
+  webReg = list;
+  if (!list.length) { slot.innerHTML = `<h2 class="sec-h">On the internet</h2><p class="hint">No songs found online for “${esc(q)}”.</p>`; return; }
+  $('#no-results')?.remove();
+  const idx = matchIndex();
+  slot.innerHTML = `<h2 class="sec-h">On the internet</h2>` + list.map((s, i) => {
+    const mine = findMatch(s, idx);
+    const sub = [s.artists.join(', '), s.album, s.year].filter(Boolean).join(' · ');
+    return `<div class="row web-row" data-act="web-open" data-w="${i}">
+      <div class="web-cover">${webArt(s.art)}${s.preview ? `<button class="web-pv" data-act="web-preview" data-w="${i}" aria-label="Play preview">${icon(webPlaying === s.preview ? 'pause' : 'play')}</button>` : ''}</div>
+      <div class="meta"><div class="t">${s.explicit ? '<span class="e-badge">E</span>' : ''}${esc(s.title)}</div><div class="s"><span class="txt">${esc(sub)}</span></div>
+        ${mine ? `<div class="s"><span class="txt in-lib">${icon('check')}In your library</span></div>` : isWished(s) ? `<div class="s"><span class="txt in-lib">${icon('heart')}On your wish list</span></div>` : ''}</div>
+      <button class="icon-btn" data-act="web-open" data-w="${i}" aria-label="More">${icon('more')}</button></div>`;
+  }).join('')
+    + (list.length >= webLimit && webLimit < 50 ? `<div class="pad"><button class="sheet-item center" data-act="web-more">Show more results</button></div>` : '')
+    + `<p class="hint web-credit">Song info and previews from Apple Music.</p>`;
+}
+
+// 30-second previews play in their own little player, separate from your library playback.
+let webAudio = null;
+let webPlaying = '';
+function setPreviewIcons() {
+  for (const b of $$('[data-act="web-preview"]')) {
+    const s = webReg[+b.dataset.w];
+    b.innerHTML = icon(s && s.preview === webPlaying ? 'pause' : 'play');
+  }
+  const sb = $('#web-sheet-pv');
+  if (sb) sb.querySelector('span').textContent = sb.dataset.url === webPlaying ? 'Pause preview' : 'Play 30-second preview';
+}
+function stopPreview() {
+  if (!webAudio) return;
+  webAudio.pause();
+  webPlaying = '';
+  setPreviewIcons();
+}
+function togglePreview(s) {
+  if (!s?.preview) return;
+  if (!webAudio) {
+    webAudio = new Audio();
+    webAudio.preload = 'auto';
+    webAudio.addEventListener('ended', () => { webPlaying = ''; setPreviewIcons(); });
+    webAudio.addEventListener('error', () => { if (webPlaying) toast('Couldn’t play the preview'); webPlaying = ''; setPreviewIcons(); });
+  }
+  if (webPlaying === s.preview) return stopPreview();
+  if (!eng.paused()) eng.pause(); // don't play over your music
+  webAudio.src = s.preview;
+  webPlaying = s.preview;
+  webAudio.play().catch(() => { webPlaying = ''; setPreviewIcons(); });
+  setPreviewIcons();
+}
+
+// Wish list: songs found online that you want to get; they show up in "Missing songs" until the file is added.
+let wishList = ls.get('wishList', []);
+const saveWish = () => ls.set('wishList', wishList);
+const isWished = s => wishList.some(w => missKey(w) === missKey(s));
+function toggleWish(s) {
+  if (isWished(s)) {
+    wishList = wishList.filter(w => missKey(w) !== missKey(s));
+    toast('Removed from your wish list');
+  } else {
+    const { title, artists, album, durationMs, year, genre, art, url } = s;
+    wishList.unshift({ title, artists, album, durationMs, year, genre, art, url, at: Date.now() });
+    toast('Added to your wish list (in Missing songs)');
+  }
+  saveWish();
+  if ($('#web-results')) fillWebResults();
+  else refresh();
+}
+
+function webSongSheet(s) {
+  const q = encodeURIComponent(`${s.title} ${s.artists[0] || ''}`.trim());
+  const mine = findMatch(s, matchIndex());
+  const facts = [s.album && `Album · ${s.album}`, s.year && `Released · ${s.year}`, s.genre && `Genre · ${s.genre}`, s.durationMs && `Length · ${fmtTime(s.durationMs / 1000)}`].filter(Boolean);
+  const m = menu(`<div class="web-head">${webArt(s.art, 'lg')}<div class="meta"><div class="t">${esc(s.title)}</div><div class="s"><span class="txt">${esc(s.artists.join(', '))}</span></div>
+      <div class="web-facts">${facts.map(f => `<span>${esc(f)}</span>`).join('')}</div></div></div>
+    ${mine ? `<p class="hint get-tip">${icon('check')} This song is already in your library.</p>` : ''}`, [
+    s.preview && { icon: 'play', label: webPlaying === s.preview ? 'Pause preview' : 'Play 30-second preview', run: () => togglePreview(s) },
+    mine && { icon: 'music', label: 'Play it from your library', run: () => { stopPreview(); startQueue([mine.id], 0, null); } },
+    s.url && { icon: 'globe', label: 'Open in Apple Music', run: () => window.open(s.url, '_blank', 'noopener') },
+    !mine && { icon: isWished(s) ? 'heart-fill' : 'heart', on: isWished(s), label: isWished(s) ? 'Remove from wish list' : 'Add to wish list', run: () => toggleWish(s) },
+    ...(!mine ? STORES.slice(1).map(st => ({ icon: 'search', label: `Find on ${st.name}`, run: () => window.open(st.url(q), '_blank', 'noopener') })) : []),
+    { icon: 'user', label: `More by ${s.artists[0]}`, run: () => { S.query = s.artists[0]; const i = $('#q'); if (i) i.value = S.query; updateResults(); $('#view').scrollTop = 0; } },
+    { icon: 'copy', label: 'Copy title & artist', run: () => navigator.clipboard?.writeText(songLine(s)).then(() => toast('Copied'), () => toast('Couldn’t copy')) },
+  ]);
+  // keep the preview button's label in step while the sheet is open (it doesn't close the sheet)
+  const pv = m.el.querySelector('[data-mi="0"]');
+  if (s.preview && pv) { pv.id = 'web-sheet-pv'; pv.dataset.url = s.preview; pv.addEventListener('click', e => { e.stopPropagation(); togglePreview(s); }, true); }
 }
 
 // ---------- Spotify playlist matching ----------
@@ -2111,7 +2272,7 @@ function updatePositionState() {
 function setupAudio() {
   eng.init();
   eng.setEnhanced(CFG.enhanced);
-  eng.on('play', () => { syncPlayState(); updatePositionState(); lastTick = performance.now(); });
+  eng.on('play', () => { if (webPlaying) stopPreview(); syncPlayState(); updatePositionState(); lastTick = performance.now(); });
   eng.on('pause', () => { syncPlayState(); saveQueue(true); updatePositionState(); });
   eng.on('timeupdate', () => { updateProgress(); saveQueue(); });
   eng.on('seeked', updatePositionState);
@@ -3060,7 +3221,17 @@ function missingSongs(pid = 'all', { includeHidden = false } = {}) {
       if (!e.playlists.includes(p.name)) e.playlists.push(p.name);
     }
   }
-  return [...map.values()].sort((a, b) => b.playlists.length - a.playlists.length || a.sp.title.localeCompare(b.sp.title));
+  const wished = [];
+  if (pid === 'all' && wishList.length) {
+    const idx = matchIndex();
+    for (const w of wishList) {
+      const k = missKey(w);
+      if (findMatch(w, idx) || (!includeHidden && missingHidden.has(k))) continue;
+      if (map.has(k)) { map.get(k).playlists.unshift('Wish list'); continue; }
+      wished.push({ key: k, sp: w, playlists: ['Wish list'], wish: true });
+    }
+  }
+  return [...wished, ...[...map.values()].sort((a, b) => b.playlists.length - a.playlists.length || a.sp.title.localeCompare(b.sp.title))];
 }
 
 // Legitimate places to buy or find a song (opens a search in Safari / the store app).
@@ -3077,11 +3248,13 @@ function getSongSheet(sp) {
   const q = encodeURIComponent(`${sp.title} ${sp.artists[0] || ''}`.trim());
   const k = missKey(sp);
   const hidden = missingHidden.has(k);
-  menu(`<div class="sheet-head">${artHTML(null, 'sm')}<div class="meta"><div class="t">${esc(sp.title)}</div><div class="s"><span class="txt">${esc([sp.artists.join(', '), sp.album, sp.durationMs ? fmtTime(sp.durationMs / 1000) : ''].filter(Boolean).join(' · '))}</span></div></div></div>
+  const wished = isWished(sp);
+  menu(`<div class="sheet-head">${webArt(sp.art)}<div class="meta"><div class="t">${esc(sp.title)}</div><div class="s"><span class="txt">${esc([sp.artists.join(', '), sp.album, sp.durationMs ? fmtTime(sp.durationMs / 1000) : ''].filter(Boolean).join(' · '))}</span></div></div></div>
     <p class="hint get-tip">Find it in a store, buy or download it, then add the file with <b>Add music files</b>. It joins your playlists automatically.</p>`, [
     ...STORES.map(st => ({ icon: 'search', label: `Search ${st.name}`, run: () => window.open(st.url(q), '_blank', 'noopener') })),
     { icon: 'copy', label: 'Copy title & artist', run: () => navigator.clipboard?.writeText(songLine(sp)).then(() => toast('Copied'), () => toast('Couldn’t copy')) },
-    { icon: hidden ? 'check' : 'close', label: hidden ? 'Show in missing songs again' : 'Hide from missing songs', run: () => {
+    wished && { icon: 'heart-fill', on: true, label: 'Remove from wish list', run: () => toggleWish(sp) },
+    !wished && { icon: hidden ? 'check' : 'close', label: hidden ? 'Show in missing songs again' : 'Hide from missing songs', run: () => {
       hidden ? missingHidden.delete(k) : missingHidden.add(k);
       saveHidden();
       toast(hidden ? 'Back in the missing list' : 'Hidden from the missing list');
@@ -3100,16 +3273,16 @@ function missingView(top) {
   missReg = list.map(e => e.sp);
   const title = p ? `Missing from ${p.name}` : 'Missing songs';
   const head = `${topbar(title, true)}<div class="pad">
-    <div class="miss-hero"><div class="miss-num">${list.length}</div><div><b>${list.length === 1 ? 'song isn’t' : 'songs aren’t'} in Artify yet</b><small>${p ? `From “${esc(p.name)}”` : 'From your imported Spotify playlists'}. Get them from a store, add the files, and they join your playlists automatically.</small></div></div>
+    <div class="miss-hero"><div class="miss-num">${list.length}</div><div><b>${list.length === 1 ? 'song isn’t' : 'songs aren’t'} in Artify yet</b><small>${p ? `From “${esc(p.name)}”` : 'From your Spotify playlists and your wish list'}. Get them from a store, add the files, and they join your playlists automatically.</small></div></div>
     ${list.length ? `<div class="miss-acts"><button class="chip sm" data-act="miss-copy">${icon('copy')}Copy list</button><button class="chip sm" data-act="miss-share">${icon('share')}Share list</button></div>` : ''}
   </div>`;
   if (!list.length) {
     return head + `<div class="empty small"><div class="empty-ic">${icon('check')}</div><h3>Nothing missing</h3><p class="hint">${hiddenN ? '' : 'Every song from these playlists is in your library.'}</p>${hiddenN ? `<button class="btn-ghost" data-act="miss-unhide">Show ${plural(hiddenN, 'hidden song')}</button>` : ''}</div>`;
   }
-  return head + list.map((e, i) => `<div class="row miss-row" data-act="miss-get" data-m="${i}">
-      ${artHTML(null, 'sm')}
+  return head + list.map((e, i) => `<div class="row miss-row${e.sp.art ? ' has-art' : ''}" data-act="miss-get" data-m="${i}">
+      ${webArt(e.sp.art)}
       <div class="meta"><div class="t">${esc(e.sp.title)}</div><div class="s"><span class="txt">${esc([e.sp.artists.join(', '), e.sp.album].filter(Boolean).join(' · '))}</span></div>
-        ${pid === 'all' ? `<div class="s"><span class="txt miss-pl">In ${esc(e.playlists.length > 2 ? `${e.playlists.slice(0, 2).join(', ')} +${e.playlists.length - 2}` : e.playlists.join(', '))}</span></div>` : ''}</div>
+        ${pid === 'all' ? `<div class="s"><span class="txt miss-pl">${e.wish ? 'On your wish list' : `In ${esc(e.playlists.length > 2 ? `${e.playlists.slice(0, 2).join(', ')} +${e.playlists.length - 2}` : e.playlists.join(', '))}`}</span></div>` : ''}</div>
       <button class="chip sm get-btn" data-act="miss-get" data-m="${i}">Get</button></div>`).join('')
     + (hiddenN ? `<div class="pad"><button class="sheet-item center" data-act="miss-unhide">Show ${plural(hiddenN, 'hidden song')}</button></div>` : '');
 }
@@ -4450,6 +4623,10 @@ const ACTIONS = {
   'add-files': pickFiles,
   'new-playlist': newPlaylist,
   'add-songs': () => { const p = S.playlists.get(topOf().id); if (p) songPicker(p); },
+  'web-open': el => { const s = webReg[+el.dataset.w]; if (s) webSongSheet(s); },
+  'web-preview': el => togglePreview(webReg[+el.dataset.w]),
+  'web-more': () => { webLimit = 50; fillWebResults(); },
+  'web-retry': () => fillWebResults(),
   'lyr-play': el => {
     // Play the song straight from the matching line (synced lyrics), like jumping to a quote.
     const l = lists[+el.dataset.list];
@@ -4845,7 +5022,7 @@ async function init() {
   updatePlayerUI();
   if (CFG.launch === 'quick' && S.tracks.size && !redirect && !location.search.includes('shared')) openQuick();
   importShared().catch(e => console.warn('Shared import failed', e));
-  window.addEventListener('online', () => runAutoLyrics());
+  window.addEventListener('online', () => { runAutoLyrics(); scheduleWebSearch(); });
   setTimeout(() => {
     runAnalysis();
     if (CFG.aiLang === true) runLang();
