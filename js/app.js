@@ -56,6 +56,7 @@ const DEFAULTS = {
   enhanced: false, crossfade: 6, smartTransitions: true, skipSilence: true, leveling: true,
   eqMode: 'off', eqPreset: 'flat', eqCustom: new Array(10).fill(0), karaoke: false, effect: 'none',
   speed: 1, smartShuffle: true, aiLang: null,
+  autoLyrics: true, // look up synced lyrics automatically (LRCLIB)
   theme: 'sky', // accent colour
   bg: 'dark', // background style
   launch: 'home', // 'home' | 'quick': what the app shows when it opens
@@ -1093,6 +1094,7 @@ const VIEWS = {
         ${row('backup-menu', 'backup', 'Backup & share', 'Move your library or a playlist to another phone')}
         <div class="set-row">${icon('wave')}<div><b>Song analysis</b><small id="job-an">…</small></div></div>
         <div class="set-row">${icon('globe')}<div><b>AI language detection</b><small id="job-lang">…</small></div>${sw('aiLang', CFG.aiLang === true, 'ai-toggle')}</div>
+        <div class="set-row">${icon('lyrics')}<div><b>Find synced lyrics automatically</b><small id="job-lyr">…</small></div>${sw('autoLyrics', CFG.autoLyrics)}</div>
         <div class="set-row">${icon('storage')}<div><b>Storage</b><small id="st-usage">Checking…</small></div></div>
         <button class="set-row" data-act="persist">${icon('shield')}<div><b>Protect my library</b><small id="st-persist">Asks the browser never to clear your music</small></div></button>
       </div>
@@ -1885,6 +1887,7 @@ function tick() {
 
   if (S.loop?.b != null && pos >= S.loop.b) { eng.seek(S.loop.a); return; }
   if (S.showLyrics) updateLyrics(pos);
+  else if ($('#np.open')) updateLyricLine(pos);
   if (S.sleep?.until && Date.now() >= S.sleep.until) {
     S.sleep = null;
     updateSleepUI();
@@ -2095,6 +2098,7 @@ function buildChrome() {
       <div id="np-lyrics" class="np-lyrics no-drag" hidden></div>
       <div class="heart-pop" id="heart-pop">${icon('heart-fill')}</div>
     </div>
+    <button class="np-line" id="np-line" data-act="np-lyrics" aria-label="Show lyrics" hidden><span class="cur" id="np-line-cur"></span><span class="nxt" id="np-line-nxt"></span></button>
     <button class="np-memory" id="np-memory" data-act="memory-cur" hidden></button>
     <div class="np-info"><div class="np-titles"><div class="np-t" id="np-t"></div><button class="np-s" id="np-s" data-act="np-artist"></button></div>
       <button class="icon-btn" data-act="like-cur" aria-label="Like"></button></div>
@@ -2195,15 +2199,82 @@ function closeNP() {
   setTimeout(() => { if (!np.classList.contains('open')) np.classList.remove('anim'); }, 350);
 }
 
+/**
+ * Drag rows by their handle to reorder them. `scroller` auto-scrolls near its edges;
+ * `onDrop()` runs after you let go (read the new order from the DOM).
+ */
+function makeSortable(box, { rows, handle, scroller, onDrop }) {
+  let drag = null;
+  let timer = null;
+  const move = y => {
+    const { row } = drag;
+    row.style.transform = `translateY(${y - drag.y}px)`;
+    const mid = row.getBoundingClientRect().top + row.offsetHeight / 2;
+    const next = row.nextElementSibling;
+    const prev = row.previousElementSibling;
+    if (next?.matches(rows) && mid > next.getBoundingClientRect().top + next.offsetHeight / 2) {
+      box.insertBefore(next, row);
+      drag.y += next.offsetHeight;
+    } else if (prev?.matches(rows) && mid < prev.getBoundingClientRect().top + prev.offsetHeight / 2) {
+      box.insertBefore(row, prev);
+      drag.y -= prev.offsetHeight;
+    } else return;
+    row.style.transform = `translateY(${y - drag.y}px)`;
+  };
+  box.addEventListener('pointerdown', e => {
+    const h = e.target.closest(handle);
+    if (!h) return;
+    e.preventDefault();
+    const row = h.closest(rows);
+    drag = { row, y: e.clientY, lastY: e.clientY };
+    row.classList.add('dragging');
+    try { h.setPointerCapture(e.pointerId); } catch {}
+    timer = setInterval(() => {
+      if (!drag) return;
+      const vr = scroller.getBoundingClientRect();
+      const dy = drag.lastY < vr.top + 90 ? -10 : drag.lastY > vr.bottom - 120 ? 10 : 0;
+      if (dy) { scroller.scrollTop += dy; drag.y -= dy; move(drag.lastY); }
+    }, 16);
+  });
+  box.addEventListener('pointermove', e => { if (drag) { drag.lastY = e.clientY; move(e.clientY); } });
+  const end = () => {
+    if (!drag) return;
+    clearInterval(timer);
+    drag.row.classList.remove('dragging');
+    drag.row.style.transform = '';
+    drag = null;
+    onDrop();
+  };
+  box.addEventListener('pointerup', end);
+  box.addEventListener('pointercancel', end);
+}
+
 function queueSheet() {
   const t = cur();
   if (!t) return;
-  const qRow = (tr, i, now) => `<div class="row song${now ? ' playing' : ''}" data-qi="${i}" data-tid="${tr.id}">${artHTML(tr.artKey, 'sm')}<div class="meta"><div class="t">${esc(tr.title)}</div><div class="s"><span class="txt">${esc(tr.artist || 'Unknown artist')}</span></div></div>${now ? '' : `<button class="icon-btn" data-qrm aria-label="Remove">${icon('close')}</button>`}</div>`;
+  const qRow = (tr, i, now) => `<div class="row song${now ? ' playing' : ' q-up'}" data-qi="${i}" data-tid="${tr.id}">${artHTML(tr.artKey, 'sm')}<div class="meta"><div class="t">${esc(tr.title)}</div><div class="s"><span class="txt">${esc(tr.artist || 'Unknown artist')}</span></div></div>${now ? '' : `<button class="icon-btn" data-qrm aria-label="Remove">${icon('close')}</button><span class="drag no-drag" data-qdrag aria-label="Drag to reorder">${icon('queue')}</span>`}</div>`;
   const up = S.queue.slice(S.qi + 1, S.qi + 201).map((id, k) => [S.tracks.get(id), S.qi + 1 + k]).filter(x => x[0]);
   const [, name] = ctxLabel();
   const s = sheet(`<div class="sheet-title">Queue</div><div class="q-sec">Now playing</div>${qRow(t, S.qi, true)}
-    <div class="q-sec">Next from: ${esc(name)}</div>${up.length ? up.map(([tr, i]) => qRow(tr, i)).join('') : '<p class="hint">Nothing up next.</p>'}`, { cls: 'tall' });
+    <div class="q-sec">Next from: ${esc(name)}${up.length > 1 ? '<small>Drag ≡ to reorder</small>' : ''}</div><div class="q-list">${up.length ? up.map(([tr, i]) => qRow(tr, i)).join('') : '<p class="hint">Nothing up next.</p>'}</div>`, { cls: 'tall' });
+  const list = $('.q-list', s.el);
+  makeSortable(list, {
+    rows: '.q-up',
+    handle: '[data-qdrag]',
+    scroller: $('.sheet', s.el),
+    onDrop: () => {
+      // Rebuild the upcoming part of the queue in the new on-screen order.
+      const rows = $$('.q-up', list);
+      const ids = rows.map(r => r.dataset.tid);
+      const start = S.qi + 1;
+      S.queue.splice(start, ids.length, ...ids);
+      if (!S.shuffle) S.unshuffled = S.queue.slice();
+      rows.forEach((r, k) => { r.dataset.qi = start + k; });
+      saveQueue(true);
+    },
+  });
   s.el.addEventListener('click', e => {
+    if (e.target.closest('[data-qdrag]')) return; // letting go of a drag isn't a tap
     const r = e.target.closest('[data-qi]');
     if (!r) return;
     const i = +r.dataset.qi;
@@ -2231,7 +2302,28 @@ async function loadLyrics(t) {
     S.lyrics = { id: t.id, data: parseLyrics(text) };
   }
   $('#np-lyr-btn').classList.toggle('on', !!S.lyrics?.data);
+  $('#np-line').dataset.on = '';
+  updateLyricLine(eng.time());
   if (S.showLyrics) renderLyrics();
+  // No synced lyrics yet? Look them up now (in the background) so the line under the cover can appear.
+  if (!S.lyrics?.data?.synced) autoLyricsFor(t, { priority: true }).then(found => { if (found && cur() === t) loadLyrics(t); });
+}
+
+/** The line being sung, shown under the cover (with the next line faded), like Spotify. */
+function updateLyricLine(pos) {
+  const el = $('#np-line');
+  const data = S.lyrics?.data;
+  if (!data?.synced || S.showLyrics) { el.hidden = true; return; }
+  const i = activeLine(data, pos);
+  if (el.dataset.on === String(i) && !el.hidden) return;
+  el.dataset.on = String(i);
+  const line = k => (data.lines[k]?.text || '').trim() || '♪';
+  el.hidden = false;
+  $('#np-line-cur').textContent = i < 0 ? '♪' : line(i);
+  $('#np-line-nxt').textContent = i + 1 < data.lines.length ? line(i + 1) : '';
+  el.classList.remove('tick');
+  void el.offsetWidth;
+  el.classList.add('tick');
 }
 
 function renderLyrics() {
@@ -2267,13 +2359,16 @@ function toggleLyricsView() {
   $('#np-art').style.visibility = S.showLyrics ? 'hidden' : '';
   $('#np-lyr-btn').classList.toggle('active', S.showLyrics);
   if (S.showLyrics) renderLyrics();
+  $('#np-line').dataset.on = '';
+  updateLyricLine(eng.time());
 }
 
-async function saveLyrics(t, text) {
+async function saveLyrics(t, text, { quiet = false } = {}) {
   const data = parseLyrics(text);
-  if (!data) { toast('That file doesn’t contain any lyrics'); return false; }
+  if (!data) { if (!quiet) toast('That file doesn’t contain any lyrics'); return false; }
   await db.put('lyrics', text, t.id);
   t.hasLyrics = true;
+  t.lyricsSynced = data.synced;
   await db.put('tracks', t);
   resetLyricsIndex();
   if (t === cur()) loadLyrics(t);
@@ -2323,6 +2418,70 @@ async function lrclibSearch(t) {
   return [...found.values()]
     .sort((a, b) => (b.syncedLyrics ? 1 : 0) - (a.syncedLyrics ? 1 : 0) || (dur ? Math.abs(a.duration - dur) - Math.abs(b.duration - dur) : 0))
     .slice(0, 12);
+}
+
+// ---------- automatic synced lyrics ----------
+
+/** A result we trust enough to save without asking: synced, same title, matching artist, same length (±4 s). */
+function pickAutoLyrics(t, results) {
+  const title = smart.normTitle(t.title);
+  const arts = artistsOf(t).map(smart.normName).filter(Boolean);
+  return results.find(r => {
+    if (!r.syncedLyrics || r.instrumental) return false;
+    if (smart.normTitle(r.trackName) !== title) return false;
+    const ra = smart.normName(r.artistName);
+    if (arts.length && !arts.some(a => ra.includes(a) || a.includes(ra))) return false;
+    // The length must be known on both sides and agree; otherwise it could be a different version (or song).
+    if (!(t.duration > 0 && r.duration > 0 && Math.abs(r.duration - t.duration) <= 4)) return false;
+    // The database can be mislabeled (e.g. "46 s" on a 6-minute version), so check the timing itself too:
+    // no line may come after the song ends, and the lyrics shouldn't stop before about a third of it.
+    const data = parseLyrics(r.syncedLyrics);
+    const last = data?.synced ? data.lines.at(-1).t : null;
+    return last != null && last <= t.duration + 3 && last >= t.duration * 0.35;
+  });
+}
+
+let autoLyrQueue = Promise.resolve();
+/** Looks up synced lyrics for one song (one request at a time, app-wide). Resolves true when it saved some. */
+function autoLyricsFor(t, { priority = false } = {}) {
+  if (!CFG.autoLyrics || !navigator.onLine) return Promise.resolve(false);
+  if (t.hasLyrics && t.lyricsSynced !== false) return Promise.resolve(false); // already synced, or your own file
+  if (t.lyrTried && Date.now() - t.lyrTried < (priority ? 3 : 14) * 864e5) return Promise.resolve(false);
+  const run = autoLyrQueue.then(async () => {
+    if (t.lyrTried && Date.now() - t.lyrTried < 60000) return false; // just checked by another caller
+    try {
+      const best = pickAutoLyrics(t, await lrclibSearch(t));
+      t.lyrTried = Date.now();
+      if (best && await saveLyrics(t, best.syncedLyrics, { quiet: true })) {
+        t.lyricsAuto = true;
+        await db.put('tracks', t);
+        updateJobStatus();
+        return true;
+      }
+      if (S.tracks.has(t.id)) await db.put('tracks', t);
+    } catch {}
+    return false;
+  });
+  autoLyrQueue = run.catch(() => {});
+  return run;
+}
+
+/** Goes through the library in the background, adding synced lyrics where a confident match exists. */
+async function runAutoLyrics() {
+  if (JOBS.lyr.running || !CFG.autoLyrics) return;
+  JOBS.lyr.running = true;
+  updateJobStatus();
+  try {
+    for (const t of [...S.tracks.values()]) {
+      if (!CFG.autoLyrics || !navigator.onLine) break;
+      while (S.importing) await sleep(2000);
+      if (!S.tracks.has(t.id)) continue;
+      await autoLyricsFor(t);
+    }
+  } finally {
+    JOBS.lyr.running = false;
+    updateJobStatus();
+  }
 }
 
 /** "Add lyrics": find them online (with a synced preview before saving) or choose a file. */
@@ -3564,7 +3723,7 @@ function editSheet(tracks) {
 
 // ---------- background jobs: analysis & AI language ----------
 
-const JOBS = { an: { running: false }, lang: { running: false, done: 0 }, model: { state: 'none', pct: 0, err: '' } };
+const JOBS = { an: { running: false }, lang: { running: false, done: 0 }, lyr: { running: false }, model: { state: 'none', pct: 0, err: '' } };
 
 let anCount = 0;
 async function runAnalysis() {
@@ -3610,6 +3769,7 @@ async function runAnalysis() {
     D = null;
     softRefresh(true);
     runLang();
+    runAutoLyrics();
   }
 }
 
@@ -3757,6 +3917,12 @@ async function runLang() {
 
 function updateJobStatus() {
   const all = [...S.tracks.values()];
+  const ly = $('#job-lyr');
+  if (ly) {
+    const synced = all.filter(t => t.hasLyrics && t.lyricsSynced !== false).length;
+    ly.textContent = !CFG.autoLyrics ? 'Off · add lyrics yourself from a song’s ··· menu'
+      : `${synced} of ${all.length} songs have synced lyrics${JOBS.lyr.running ? ' · looking up more…' : ''} · uses the free LRCLIB database (sends title & artist)`;
+  }
   const an = $('#job-an');
   if (an) {
     const done = all.filter(t => t.an).length;
@@ -4161,6 +4327,7 @@ const ACTIONS = {
     el.classList.toggle('on', CFG[k]);
     el.setAttribute('aria-checked', CFG[k]);
     if (k === 'enhanced') refresh();
+    if (k === 'autoLyrics') { updateJobStatus(); if (CFG.autoLyrics) runAutoLyrics(); }
   },
   'cfg-set': el => {
     const k = el.dataset.k;
@@ -4392,6 +4559,7 @@ async function init() {
   updatePlayerUI();
   if (CFG.launch === 'quick' && S.tracks.size && !redirect && !location.search.includes('shared')) openQuick();
   importShared().catch(e => console.warn('Shared import failed', e));
+  window.addEventListener('online', () => runAutoLyrics());
   setTimeout(() => {
     runAnalysis();
     if (CFG.aiLang === true) runLang();

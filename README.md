@@ -18,6 +18,9 @@ No server, no build step, no accounts. It's plain HTML/CSS/JS.
 - **Clean up song info**: removes "(Official Video) [HD]" and the like, moves "feat." credits into the artist, fills missing genres
 - **Find duplicates**: keeps the best-quality copy and merges likes, plays and playlists
 - **Song memories**: attach a note to any song; it shows in Now Playing and is searchable
+- **Automatic synced lyrics** (on by default, Settings › Library): looks songs up on LRCLIB in the background and saves lyrics only when title, artist, length and the lyric timing all match; songs with plain lyrics get upgraded to synced when a match exists
+- **Line being sung under the cover** in the player (with the next line faded), like Spotify; tap it for the full lyrics
+- **Reorder the queue** by dragging the ≡ handles
 - **Find lyrics online** (Add lyrics › Find lyrics online): searches the free LRCLIB database, previews the first synced lines in time with your song, and downloads the full lyrics when you approve
 - **Select several songs** (Select button, or press and hold a song) to add them to a playlist, queue, like, edit, save, remove or delete in one go
 - **Synced lyrics** from .lrc files you add (or lyrics embedded in the file), and **lyrics search**: type a line in Search to find the song and play it from that line

@@ -736,3 +736,20 @@ body.selecting #view { padding-bottom: calc(var(--tabs-h) + 150px + var(--tab-pb
 .coll-foot .btn-ghost { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; }
 .coll-foot .btn-ghost .ic { width: 15px; height: 15px; }
 .coll-foot p { margin: 0; }
+
+/* ---------- line being sung, under the cover ---------- */
+
+.np-line { display: block; width: 100%; text-align: left; margin: -4px 0 12px; min-height: 52px; }
+.np-line .cur { display: block; font-size: 19px; font-weight: 800; line-height: 1.25; color: #fff; letter-spacing: -.2px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.np-line .nxt { display: block; font-size: 14.5px; font-weight: 700; color: rgba(255, 255, 255, .45); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-line.tick .cur { animation: lineIn .35s ease-out; }
+@keyframes lineIn { from { opacity: .2; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* ---------- queue reordering ---------- */
+
+.q-sec small { display: block; font-size: 12px; font-weight: 600; color: var(--sub); margin-top: 2px; }
+.q-up .drag { width: 40px; height: 44px; display: grid; place-items: center; color: var(--sub); touch-action: none; cursor: grab; flex: none; }
+.q-up .drag .ic { width: 20px; height: 20px; }
+.q-up .icon-btn[data-qrm] .ic { width: 18px; height: 18px; }
+.q-list .row.dragging { position: relative; z-index: 5; background: var(--surface-3); box-shadow: 0 8px 24px rgba(0, 0, 0, .55); border-radius: 6px; }
+@media (prefers-reduced-motion: reduce) { .np-line.tick .cur { animation: none; } }
