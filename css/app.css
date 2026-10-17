@@ -712,7 +712,7 @@ body.selecting #view { padding-bottom: calc(var(--tabs-h) + 150px + var(--tab-pb
 .lrc-head { padding: 0 0 10px; }
 .lrc-head b { display: block; font-size: 16px; }
 .lrc-head small { color: var(--sub); font-size: 12.5px; }
-.lrc-preview { max-height: 230px; overflow-y: auto; background: var(--surface); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; scrollbar-width: none; }
+.lrc-preview { position: relative; max-height: 230px; overflow-y: auto; background: var(--surface); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; scrollbar-width: none; }
 .lrc-preview p { margin: 0 0 8px; font-size: 16px; font-weight: 700; color: rgba(255, 255, 255, .55); transition: color .2s; }
 .lrc-preview p.on { color: #fff; }
 .lrc-preview p span { display: inline-block; min-width: 40px; font-size: 11px; font-weight: 600; color: var(--accent); margin-right: 6px; font-variant-numeric: tabular-nums; }
@@ -737,13 +737,16 @@ body.selecting #view { padding-bottom: calc(var(--tabs-h) + 150px + var(--tab-pb
 .coll-foot .btn-ghost .ic { width: 15px; height: 15px; }
 .coll-foot p { margin: 0; }
 
-/* ---------- line being sung, under the cover ---------- */
+/* ---------- line being sung, under the cover (Spotify-style strip) ---------- */
 
-.np-line { display: block; width: 100%; text-align: left; margin: -4px 0 12px; min-height: 52px; }
-.np-line .cur { display: block; font-size: 19px; font-weight: 800; line-height: 1.25; color: #fff; letter-spacing: -.2px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.np-line .nxt { display: block; font-size: 14.5px; font-weight: 700; color: rgba(255, 255, 255, .45); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.np-line.tick .cur { animation: lineIn .35s ease-out; }
-@keyframes lineIn { from { opacity: .2; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.np-line { position: relative; display: block; width: 100%; height: 60px; margin: -4px 0 12px; overflow: hidden; text-align: left;
+  -webkit-mask-image: linear-gradient(#000 0, #000 58%, transparent 100%); mask-image: linear-gradient(#000 0, #000 58%, transparent 100%); }
+.np-line-track { will-change: transform; transition: transform .6s cubic-bezier(.22, .9, .25, 1); }
+.np-line-track p { margin: 0 0 6px; font-size: 19px; font-weight: 800; line-height: 1.22; letter-spacing: -.2px; color: rgba(255, 255, 255, .38);
+  transition: color .45s ease, transform .45s ease; transform-origin: left center;
+  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.np-line-track p.on { color: #fff; }
+@media (prefers-reduced-motion: reduce) { .np-line-track, .np-line-track p { transition: none; } }
 
 /* ---------- queue reordering ---------- */
 
@@ -752,4 +755,3 @@ body.selecting #view { padding-bottom: calc(var(--tabs-h) + 150px + var(--tab-pb
 .q-up .drag .ic { width: 20px; height: 20px; }
 .q-up .icon-btn[data-qrm] .ic { width: 18px; height: 18px; }
 .q-list .row.dragging { position: relative; z-index: 5; background: var(--surface-3); box-shadow: 0 8px 24px rgba(0, 0, 0, .55); border-radius: 6px; }
-@media (prefers-reduced-motion: reduce) { .np-line.tick .cur { animation: none; } }

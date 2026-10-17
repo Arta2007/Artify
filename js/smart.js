@@ -376,11 +376,38 @@ const JUNK = [
 const isAllCapsLatin = s => /[A-Z]{3}/.test(s) && s === s.toUpperCase() && /^[\x00-\x7F\u00C0-\u024F\s\d\W]+$/.test(s);
 const smartTitleCase = s => s.toLowerCase().replace(/(^|[\s(\[\-"'])(\p{L})/gu, (_, a, b) => a + b.toUpperCase());
 
+// Words that are a real part of a song's name when in brackets ("(Remix)", "[Live]") — these are kept.
+const VERSION_WORDS = /\b(?:remix|mix|live|acoustic|remaster(?:ed)?|version|edit|instrumental|demo|cover|unplugged|extended|slowed|reverb|sped\s*up|radio|mono|stereo|piano|orchestral|interlude|intro|outro|part|pt\.?|vol\.?|feat\.?|ft\.?|featuring|with|reprise|session|bonus|original)\b/i;
+// Bracketed bits that are never part of the name ("(2026)", "(Official Audio)", "(prod. X)", "(MP3)").
+const JUNK_PAREN = /\(\s*(?:\d{4}|(?:official|lyrics?|lyric video|audio|video|visuali[sz]er|music video|hd|hq|4k|\d{3,4}p|\d{2,3}\s*kbps|mp3|m4a|flac|explicit|clean|free download|download|out now|new|exclusive|premiere|prod\.?|produced by|copyright)[^)]*)\)/gi;
+
+/** Removes brackets and symbols that aren't part of a name, keeping real ones like "(Remix)" or "AC/DC". */
+function stripSymbols(s) {
+  let o = s;
+  // [..] {..} 【..】 「..」: keep the meaning if it's a version/feat credit (as round brackets), otherwise drop it
+  o = o.replace(/\[([^\]]*)\]|\{([^}]*)\}|【([^】]*)】|「([^」]*)」/g, (m, a, b, c, d) => {
+    const inner = (a ?? b ?? c ?? d ?? '').trim();
+    return inner && VERSION_WORDS.test(inner) && !JUNK_PAREN.test(`(${inner})`) ? ` (${inner})` : ' ';
+  });
+  JUNK_PAREN.lastIndex = 0;
+  o = o.replace(JUNK_PAREN, ' ');
+  if (/\s\|\s/.test(o)) o = o.split(/\s\|\s/)[0]; // "Song | Some Channel" → "Song"
+  o = o
+    .replace(/\p{Extended_Pictographic}|️|‍/gu, ' ') // emoji
+    .replace(/[~♪♫♬♩★☆♥❤✔✓✨•·^`=|<>]+/g, ' ')
+    .replace(/#(?!\d)\S*/g, ' ') // hashtags ("#viral"), but keep "#1"
+    .replace(/(?<!\p{L})\*+|\*+(?!\p{L})/gu, ' ') // decorative stars, but keep "F*ck"
+    .replace(/^["'«»“”‘’]+|["'«»“”‘’]+$/g, '') // quote marks wrapped around the whole name
+    .replace(/\(\s*\)|\[\s*\]/g, ' '); // empty brackets left behind
+  return o;
+}
+
 function clean(s) {
   if (!s) return s;
   let o = s.replace(/_/g, ' ');
   for (const re of JUNK) o = o.replace(re, '');
-  o = o.replace(/\s{2,}/g, ' ').replace(/^[\s\-–|.]+|[\s\-–|]+$/g, '').trim();
+  o = stripSymbols(o);
+  o = o.replace(/\s{2,}/g, ' ').replace(/^[\s\-–—|.,:;]+|[\s\-–—|,:;]+$/g, '').trim();
   // Long ALL-CAPS titles are usually sloppy tagging; short ones ("BORO", "SHAH") are the artist's own style.
   if (isAllCapsLatin(o) && o.split(/\s+/).length >= 3) o = smartTitleCase(o);
   return o || s;

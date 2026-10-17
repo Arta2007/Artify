@@ -2098,7 +2098,7 @@ function buildChrome() {
       <div id="np-lyrics" class="np-lyrics no-drag" hidden></div>
       <div class="heart-pop" id="heart-pop">${icon('heart-fill')}</div>
     </div>
-    <button class="np-line" id="np-line" data-act="np-lyrics" aria-label="Show lyrics" hidden><span class="cur" id="np-line-cur"></span><span class="nxt" id="np-line-nxt"></span></button>
+    <button class="np-line" id="np-line" data-act="np-lyrics" aria-label="Show lyrics" hidden><div class="np-line-track" id="np-line-track"></div></button>
     <button class="np-memory" id="np-memory" data-act="memory-cur" hidden></button>
     <div class="np-info"><div class="np-titles"><div class="np-t" id="np-t"></div><button class="np-s" id="np-s" data-act="np-artist"></button></div>
       <button class="icon-btn" data-act="like-cur" aria-label="Like"></button></div>
@@ -2303,27 +2303,42 @@ async function loadLyrics(t) {
   }
   $('#np-lyr-btn').classList.toggle('on', !!S.lyrics?.data);
   $('#np-line').dataset.on = '';
+  $('#np-line-track').dataset.for = ''; // lyrics may have changed for the same song: rebuild the strip
   updateLyricLine(eng.time());
   if (S.showLyrics) renderLyrics();
   // No synced lyrics yet? Look them up now (in the background) so the line under the cover can appear.
   if (!S.lyrics?.data?.synced) autoLyricsFor(t, { priority: true }).then(found => { if (found && cur() === t) loadLyrics(t); });
 }
 
-/** The line being sung, shown under the cover (with the next line faded), like Spotify. */
+/**
+ * The line being sung, under the cover, like Spotify: a small window onto all the lines. When the line changes
+ * the whole strip glides up and the new line brightens, with the next line waiting faded below.
+ */
 function updateLyricLine(pos) {
   const el = $('#np-line');
+  const track = $('#np-line-track');
   const data = S.lyrics?.data;
   if (!data?.synced || S.showLyrics) { el.hidden = true; return; }
-  const i = activeLine(data, pos);
-  if (el.dataset.on === String(i) && !el.hidden) return;
-  el.dataset.on = String(i);
-  const line = k => (data.lines[k]?.text || '').trim() || '♪';
+  const wasHidden = el.hidden;
   el.hidden = false;
-  $('#np-line-cur').textContent = i < 0 ? '♪' : line(i);
-  $('#np-line-nxt').textContent = i + 1 < data.lines.length ? line(i + 1) : '';
-  el.classList.remove('tick');
-  void el.offsetWidth;
-  el.classList.add('tick');
+  // Build the strip once per song.
+  if (track.dataset.for !== S.lyrics.id) {
+    track.dataset.for = S.lyrics.id;
+    track.innerHTML = data.lines.map((l, k) => `<p data-k="${k}">${esc((l.text || '').trim() || '♪')}</p>`).join('');
+    el.dataset.on = '';
+    track.style.transition = 'none';
+    track.style.transform = 'translateY(0)';
+  }
+  const i = activeLine(data, pos);
+  if (el.dataset.on === String(i) && !wasHidden) return;
+  const jump = wasHidden || Math.abs(i - (+el.dataset.on || 0)) > 2; // seeking or reopening: no long slide
+  el.dataset.on = String(i);
+  track.querySelector('p.on')?.classList.remove('on');
+  const p = track.querySelector(`p[data-k="${Math.max(0, i)}"]`);
+  if (!p) return;
+  if (i >= 0) p.classList.add('on');
+  track.style.transition = jump ? 'none' : '';
+  track.style.transform = `translateY(${-p.offsetTop}px)`;
 }
 
 function renderLyrics() {
@@ -2523,22 +2538,37 @@ function lyricsSheet(t) {
     body._preview = { r, data, first };
   };
 
-  const playPreview = () => {
+  const playPreview = async () => {
     const { data, first } = body._preview;
     const startAt = Math.max(0, (first[0]?.t ?? 0) - 1.5);
-    if (cur() !== t) startQueue([t.id], 0, null);
-    else eng.play();
-    setTimeout(() => { if (cur() === t) eng.seek(startAt); }, cur() === t ? 0 : 600);
+    const endAt = (first.at(-1)?.t ?? startAt) + 4; // stop following a few seconds after the last preview line
     stopPreview();
+    const box = $('#lrc-prev', s.el);
+    box.scrollTop = 0;
+    $$('p.on', box).forEach(p => p.classList.remove('on'));
+    if (cur() !== t) startQueue([t.id], 0, null);
+    // Wait until this song is actually loaded, then jump to the first line. Until then, the player's position
+    // still belongs to the previous song, which made the preview jump to the end.
+    for (let k = 0; k < 40 && !(cur() === t && eng.duration() > 0); k++) await sleep(100);
+    if (cur() !== t || !box.isConnected) return;
+    eng.seek(startAt);
+    if (eng.paused()) eng.play();
+    await sleep(150);
+    let shown = -2;
     timer = setInterval(() => {
-      const box = $('#lrc-prev', s.el);
-      if (!box || cur() !== t) return stopPreview();
-      const i = activeLine({ synced: true, lines: data.lines }, eng.time());
+      if (!box.isConnected || cur() !== t) return stopPreview();
+      const pos = eng.time();
+      if (pos > endAt) return stopPreview();
+      const i = Math.min(activeLine({ synced: true, lines: data.lines }, pos), first.length - 1);
+      if (i === shown) return;
+      shown = i;
       $$('p.on', box).forEach(p => p.classList.remove('on'));
       const p = box.querySelector(`p[data-li="${i}"]`);
-      if (p) { p.classList.add('on'); box.scrollTo({ top: p.offsetTop - 40, behavior: 'smooth' }); }
-      if (i >= first.length) stopPreview();
-    }, 200);
+      if (!p) return;
+      p.classList.add('on');
+      // Keep the sung line in the middle of the preview box (positions are measured inside the box).
+      box.scrollTo({ top: Math.max(0, p.offsetTop - (box.clientHeight - p.offsetHeight) / 2), behavior: 'smooth' });
+    }, 150);
   };
 
   const use = async () => {
