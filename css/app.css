@@ -803,22 +803,3 @@ body.selecting #view { padding-bottom: calc(var(--tabs-h) + 150px + var(--tab-pb
 .sync-foot { display: flex; gap: 8px; align-items: center; justify-content: flex-end; padding: 10px 16px calc(var(--sb) + 4px); border-top: 1px solid rgba(255, 255, 255, .08); }
 .sync-foot .btn-primary.inline { padding: 9px 22px; font-size: 14.5px; }
 .lyr-note .btn-ghost { margin-left: 8px; text-transform: none; letter-spacing: 0; font-size: 12px; padding: 4px 10px; }
-
-/* ---------- Search on the internet ---------- */
-
-.art.web-art > img { opacity: 1; }
-.web-row { padding-right: 2px; }
-.web-cover { position: relative; flex: none; }
-.web-pv { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; background: rgba(0, 0, 0, .32); border-radius: 4px; }
-.web-pv .ic { width: 20px; height: 20px; filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .6)); }
-.web-row .in-lib { color: var(--accent); display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
-.web-row .in-lib .ic { width: 13px; height: 13px; flex: none; }
-.e-badge { display: inline-grid; place-items: center; width: 15px; height: 15px; margin-right: 6px; border-radius: 2px; background: var(--sub); color: var(--bg); font-size: 9.5px; font-weight: 800; vertical-align: 2px; }
-.web-credit { font-size: 11.5px; color: var(--dim); margin-top: 12px; }
-.web-wait { animation: web-pulse 1.2s ease-in-out infinite; }
-@keyframes web-pulse { 50% { opacity: .45; } }
-.web-head { display: flex; gap: 14px; align-items: center; padding: 4px 20px 12px; }
-.web-head .meta .t { font-size: 17px; font-weight: 700; white-space: normal; }
-.web-facts { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; font-size: 12.5px; color: var(--sub); }
-.miss-row.has-art .art { opacity: 1; }
-.get-tip .ic { width: 14px; height: 14px; vertical-align: -2px; color: var(--accent); }
