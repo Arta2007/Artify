@@ -106,6 +106,7 @@ body.has-mini #view { padding-bottom: calc(var(--tabs-h) + var(--mini-h) + var(-
 .art { position: relative; flex: none; display: grid; place-items: center; overflow: hidden; border-radius: 4px; background: #2a2a2a; color: #6a6a6a; }
 .art > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .25s; }
 .art.loaded > img { opacity: 1; }
+.art.instant > img { transition: none; } /* already decoded: show immediately on re-renders */
 .art .ic { width: 42%; height: 42%; }
 .art.sm { width: 48px; height: 48px; }
 .art.lg { width: 120px; height: 120px; }
@@ -755,3 +756,50 @@ body.selecting #view { padding-bottom: calc(var(--tabs-h) + 150px + var(--tab-pb
 .q-up .drag .ic { width: 20px; height: 20px; }
 .q-up .icon-btn[data-qrm] .ic { width: 18px; height: 18px; }
 .q-list .row.dragging { position: relative; z-index: 5; background: var(--surface-3); box-shadow: 0 8px 24px rgba(0, 0, 0, .55); border-radius: 6px; }
+
+/* ---------- made-for-you covers: real song covers + colour band ---------- */
+
+.art.gen-img { background: var(--c); }
+.art.gen-img > .gen-collage, .art.gen-img > .gen-one { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 0; }
+.gen-collage { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.gen-collage > .art { width: 100%; height: 100%; border-radius: 0; }
+.gen-collage > .art > .ic, .gen-one > .ic { width: 30%; height: 30%; }
+.gen-band { position: absolute; left: 0; right: 0; bottom: 0; height: 48%; z-index: 1; pointer-events: none;
+  background: linear-gradient(transparent, color-mix(in srgb, var(--c) 88%, #000)); }
+.art.sm .gen-band, .quick .gen-band { height: 5px; background: var(--c); }
+.gen-label { position: absolute; left: 8%; right: 8%; bottom: 7%; z-index: 2; color: #fff; font-weight: 800; font-size: 15px; line-height: 1.12;
+  letter-spacing: -.2px; text-shadow: 0 1px 8px rgba(0, 0, 0, .45); overflow: hidden; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.art.xl .gen-label { font-size: 26px; }
+.quick .gen-label { display: none; }
+/* text-only covers (no song art yet): never let the name spill out of small squares */
+.art.gen b { overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.art.gen.sm, .quick .art.gen { place-items: center; padding: 0; }
+.quick .art.gen b { display: none; }
+
+/* ---------- sync lyrics screen ---------- */
+
+.sync-sheet { display: flex; flex-direction: column; }
+.sync-top { padding: 0 20px 8px; }
+.sync-top b { display: block; font-size: 16px; }
+.sync-top small { display: block; color: var(--sub); font-size: 12.5px; line-height: 1.45; margin-top: 3px; }
+.sync-ctrls { display: flex; align-items: center; gap: 10px; padding: 6px 16px 10px; }
+.sync-ctrls .icon-btn { color: #fff; }
+.sync-play { width: 50px !important; height: 50px !important; }
+.sync-tap { flex: 1; margin: 0 !important; width: auto !important; padding: 9px 14px !important; text-align: left; border-radius: 14px !important; min-width: 0; }
+.sync-tap small { display: block; font-size: 11px; font-weight: 600; opacity: .7; }
+.sync-tap span { display: block; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sync-tap:disabled { opacity: .45; }
+.sync-list { flex: 1; min-height: 160px; overflow-y: auto; padding: 0 8px; scrollbar-width: none; }
+.sync-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; }
+.sync-row.br { margin-top: 12px; }
+.sync-row.on { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.sync-row.on .sync-text { color: #fff; }
+.sync-time { flex: none; width: 62px; text-align: left; font-size: 12px; color: var(--sub); font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; gap: 2px; }
+.sync-row.pinned .sync-time { color: var(--accent); font-weight: 700; }
+.sync-time .ic { width: 12px; height: 12px; }
+.sync-text { flex: 1; min-width: 0; text-align: left; font-size: 14.5px; font-weight: 600; color: rgba(255, 255, 255, .7); }
+.sync-row .chip.sm { flex: none; }
+.sync-foot { display: flex; gap: 8px; align-items: center; justify-content: flex-end; padding: 10px 16px calc(var(--sb) + 4px); border-top: 1px solid rgba(255, 255, 255, .08); }
+.sync-foot .btn-primary.inline { padding: 9px 22px; font-size: 14.5px; }
+.lyr-note .btn-ghost { margin-left: 8px; text-transform: none; letter-spacing: 0; font-size: 12px; padding: 4px 10px; }

@@ -3,7 +3,8 @@ import { readTags, withID3 } from './tags.js';
 import * as sp from './spotify.js';
 import { icon } from './icons.js';
 import * as eng from './engine.js';
-import { analyzeBlob } from './analysis.js';
+import { analyzeBlob, vocalActivity } from './analysis.js';
+import * as lyricSync from './lyricsync.js';
 import * as L from './lang.js';
 import * as smart from './smart.js';
 import { parseLyrics, activeLine } from './lyrics.js';
@@ -57,6 +58,7 @@ const DEFAULTS = {
   eqMode: 'off', eqPreset: 'flat', eqCustom: new Array(10).fill(0), karaoke: false, effect: 'none',
   speed: 1, smartShuffle: true, aiLang: null,
   autoLyrics: true, // look up synced lyrics automatically (LRCLIB)
+  myLangs: null, // languages you listen to (null = worked out from your library)
   theme: 'sky', // accent colour
   bg: 'dark', // background style
   launch: 'home', // 'home' | 'quick': what the app shows when it opens
@@ -394,7 +396,16 @@ function artURL(key) {
 const artHTML = (key, cls = '', fallback = 'music') =>
   `<div class="art ${cls}"${key ? ` data-art="${esc(key)}"` : ''}>${icon(fallback)}</div>`;
 const likedArt = (cls = '') => `<div class="art liked-art ${cls}">${icon('heart-fill')}</div>`;
-const genArt = (c, cls = '') => `<div class="art gen ${cls}" style="--c:${c.color}"><b>${esc(c.title)}</b></div>`;
+/** Cover for a made-for-you list: real song covers (2×2 collage or one), a colour band, and the name on big sizes. */
+function genArt(c, cls = '') {
+  const small = /\b(sm|xs)\b/.test(cls);
+  const keys = [...new Set((c.tracks || []).map(t => t.artKey).filter(Boolean))];
+  if (!keys.length) return `<div class="art gen ${cls}" style="--c:${c.color}">${small ? icon('music') : `<b>${esc(c.title)}</b>`}</div>`;
+  const pic = keys.length >= 4
+    ? `<div class="gen-collage">${keys.slice(0, 4).map(k => `<div class="art" data-art="${esc(k)}"></div>`).join('')}</div>`
+    : `<div class="art gen-one" data-art="${esc(keys[0])}"></div>`;
+  return `<div class="art gen-img ${cls}" style="--c:${c.color}">${pic}<i class="gen-band"></i>${small ? '' : `<b class="gen-label">${esc(c.title)}</b>`}</div>`;
+}
 const collageArt = (keys, cls = '') => `<div class="art collage ${cls}">${keys.map(k => `<div class="art" data-art="${esc(k)}"></div>`).join('')}</div>`;
 function ctxArt(c, cls = '') {
   if (c.gen) return genArt(c, cls);
@@ -405,19 +416,51 @@ function ctxArt(c, cls = '') {
   return artHTML(c.artKey, cls + (c.round ? ' round' : ''), c.round ? 'user' : 'music');
 }
 
+const artReady = new Map(); // key → object URL, once known (lets covers appear instantly on re-renders)
 function hydrate(root = document) {
   for (const el of root.querySelectorAll('[data-art]:not([data-hyd])')) {
     el.dataset.hyd = '1';
-    artURL(el.dataset.art).then(u => {
-      if (!u) return;
+    const key = el.dataset.art;
+    const put = u => {
       const img = new Image();
       img.alt = '';
       img.decoding = 'async';
-      img.onload = () => el.classList.add('loaded');
       img.src = u;
       el.prepend(img);
-    });
+      if (img.complete && img.naturalWidth) el.classList.add('loaded', 'instant'); // already decoded: no fade
+      else img.onload = () => el.classList.add('loaded');
+    };
+    if (artReady.get(key)) { put(artReady.get(key)); continue; }
+    artURL(key).then(u => { if (u) { artReady.set(key, u); put(u); } });
   }
+}
+
+/**
+ * Updates `from` (on screen) to match `to` (freshly built) in place, touching only what changed.
+ * Covers that show the same picture are left alone, so nothing flashes when a background job finishes.
+ */
+function morph(from, to) {
+  const a = [...from.childNodes];
+  const b = [...to.childNodes];
+  for (let i = 0; i < b.length; i++) {
+    const n = b[i];
+    const o = a[i];
+    if (!o) { from.appendChild(n.cloneNode(true)); continue; }
+    if (o.nodeType !== n.nodeType || o.nodeName !== n.nodeName) { from.replaceChild(n.cloneNode(true), o); continue; }
+    if (n.nodeType !== 1) { if (o.nodeValue !== n.nodeValue) o.nodeValue = n.nodeValue; continue; }
+    if (o.hasAttribute('data-art') || n.hasAttribute('data-art')) {
+      const sameArt = o.getAttribute('data-art') === n.getAttribute('data-art');
+      const sameClass = o.className.replace(/\s*\b(loaded|instant)\b/g, '').trim() === n.className.trim();
+      if (sameArt && sameClass) continue; // same cover: keep the loaded picture
+      from.replaceChild(n.cloneNode(true), o);
+      continue;
+    }
+    for (const at of [...o.attributes]) if (!n.hasAttribute(at.name) && at.name !== 'style') o.removeAttribute(at.name); // keep tints set by code
+    for (const at of [...n.attributes]) if (o.getAttribute(at.name) !== at.value) o.setAttribute(at.name, at.value);
+    if (o.matches('input, textarea, select')) continue; // never disturb what's being typed
+    morph(o, n);
+  }
+  for (let i = a.length - 1; i >= b.length; i--) from.removeChild(a[i]);
 }
 
 const tints = new Map();
@@ -653,6 +696,7 @@ function render() {
   const view = $('#view');
   view.innerHTML = html;
   view.scrollTop = top.scroll || 0;
+  shownPage = top;
   hydrate(view);
   AFTER[top.v]?.(top);
   if (SEL) (SEL.view === top ? syncSelection() : endSelect());
@@ -661,9 +705,31 @@ function render() {
   syncPlayState();
 }
 
+let shownPage = null; // the stack entry currently on screen
+// Pages whose AFTER hook only does harmless things (tint), so they can be patched in place.
+const PATCHABLE = new Set(['home', 'library', 'auto', 'album', 'artist', 'genre', 'liked', 'songs', 'radio', 'playlist', 'history', 'missing', 'stats', 'folder', 'dups']);
+
+/** Re-render the current page in place (no flicker, keeps scroll and loaded covers). */
+function patchView() {
+  const top = topOf();
+  lists = [];
+  const html = VIEWS[top.v](top);
+  if (html == null) return render();
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  const view = $('#view');
+  morph(view, tmp);
+  hydrate(view);
+  if (top.v !== 'playlist' || !top.reorder) AFTER[top.v]?.(top);
+  if (SEL) syncSelection();
+  onScroll();
+  syncPlayState();
+}
+
 function refresh() {
   const top = topOf();
   if (top.v === 'search' && $('#results')) return updateResults();
+  if (shownPage === top && PATCHABLE.has(top.v) && !top.reorder) return patchView();
   top.scroll = $('#view').scrollTop;
   render();
 }
@@ -1094,6 +1160,7 @@ const VIEWS = {
         ${row('backup-menu', 'backup', 'Backup & share', 'Move your library or a playlist to another phone')}
         <div class="set-row">${icon('wave')}<div><b>Song analysis</b><small id="job-an">…</small></div></div>
         <div class="set-row">${icon('globe')}<div><b>AI language detection</b><small id="job-lang">…</small></div>${sw('aiLang', CFG.aiLang === true, 'ai-toggle')}</div>
+        <button class="set-row" data-act="my-langs">${icon('globe')}<div><b>Languages you listen to</b><small>${esc([...myLanguages()].map(L.langName).join(', ') || 'Not known yet')}${CFG.myLangs?.length ? '' : ' (automatic)'} · helps sort songs into the right language</small></div>${icon('chev', 'chev')}</button>
         <div class="set-row">${icon('lyrics')}<div><b>Find synced lyrics automatically</b><small id="job-lyr">…</small></div>${sw('autoLyrics', CFG.autoLyrics)}</div>
         <div class="set-row">${icon('storage')}<div><b>Storage</b><small id="st-usage">Checking…</small></div></div>
         <button class="set-row" data-act="persist">${icon('shield')}<div><b>Protect my library</b><small id="st-persist">Asks the browser never to clear your music</small></div></button>
@@ -1513,7 +1580,9 @@ function searchResults() {
 function updateResults() {
   lists = [];
   const r = $('#results');
-  r.innerHTML = searchResults();
+  const tmp = document.createElement('div');
+  tmp.innerHTML = searchResults();
+  morph(r, tmp); // patch in place: no flashing covers while typing or when background jobs finish
   hydrate(r);
   const clear = $('.search-box .clear');
   if (clear) clear.hidden = !S.query;
@@ -2348,7 +2417,7 @@ function renderLyrics() {
     box.innerHTML = `<div class="lyr-empty">${icon('lyrics')}<p>No lyrics for this song.</p><button class="btn-ghost" data-act="lyrics-add-cur">Find or add lyrics</button></div>`;
     return;
   }
-  box.innerHTML = `${data.synced ? '' : '<p class="lyr-note">Not synced</p>'}${data.lines.map((l, i) => `<p data-li="${i}"${l.t != null ? ` data-t="${l.t}"` : ''}>${esc(l.text) || '♪'}</p>`).join('')}`;
+  box.innerHTML = `${data.synced ? '' : '<p class="lyr-note">Not synced <button class="btn-ghost" data-act="sync-cur">Sync these lyrics</button></p>'}${data.lines.map((l, i) => `<p data-li="${i}"${l.t != null ? ` data-t="${l.t}"` : ''}>${esc(l.text) || '♪'}</p>`).join('')}`;
   box.classList.toggle('static', !data.synced);
   box.dataset.on = '-1';
   updateLyrics(eng.time());
@@ -2433,6 +2502,116 @@ async function lrclibSearch(t) {
   return [...found.values()]
     .sort((a, b) => (b.syncedLyrics ? 1 : 0) - (a.syncedLyrics ? 1 : 0) || (dur ? Math.abs(a.duration - dur) - Math.abs(b.duration - dur) : 0))
     .slice(0, 12);
+}
+
+// ---------- sync plain lyrics: automatic rough timing + tap to correct ----------
+
+async function syncSheet(t) {
+  const text = await db.get('lyrics', t.id).catch(() => null);
+  const parsed = parseLyrics(text);
+  if (!parsed) return toast('Add lyrics to this song first');
+  // Lines to time (with blank-line section breaks from the original text), and existing times if already synced.
+  const lines = parsed.synced ? parsed.lines.map(l => ({ text: l.text, br: false })) : lyricSync.splitLines(text);
+  let auto = parsed.synced ? parsed.lines.map(l => l.t) : null;
+  const anchors = new Map();
+  const history = [];
+  let times = auto ? auto.slice() : [];
+  let pending = 0;
+  let timer = null;
+
+  const s = sheet(`<div class="sheet-title">Sync lyrics</div>
+    <div class="sync-top"><b>${esc(t.title)}</b><small id="sync-status">${auto ? 'Adjust the timing: tap lines as you hear them start.' : 'Listening to the song to make a first rough sync…'}</small></div>
+    <div class="sync-ctrls">
+      <button class="icon-btn" data-k="back" aria-label="Back 5 seconds">${icon('sync')}</button>
+      <button class="play-big sync-play" data-k="play" aria-label="Play or pause">${icon('play')}</button>
+      <button class="btn-primary sync-tap" data-k="tap" disabled><small>Tap when you hear</small><span id="sync-next">…</span></button>
+    </div>
+    <div class="sync-list no-drag" id="sync-list"></div>
+    <div class="sync-foot"><button class="btn-ghost" data-k="undo">Undo tap</button><button class="btn-ghost" data-k="reset">Reset</button><button class="btn-primary inline" data-k="save" disabled>Save</button></div>`, { cls: 'tall sync-sheet' });
+  const list = $('#sync-list', s.el);
+  const status = $('#sync-status', s.el);
+  const stop = () => { clearInterval(timer); timer = null; };
+  new MutationObserver((_, obs) => { if (!s.el.isConnected) { obs.disconnect(); stop(); } }).observe($('#sheets'), { childList: true });
+
+  const draw = () => {
+    list.innerHTML = lines.map((l, i) => `<div class="sync-row${anchors.has(i) ? ' pinned' : ''}${l.br && i ? ' br' : ''}" data-i="${i}">
+      <button class="sync-time" data-k="seek" data-i="${i}">${anchors.has(i) ? icon('pin') : ''}${fmtTime(times[i] ?? 0)}.${String(Math.floor(((times[i] ?? 0) % 1) * 10))}</button>
+      <button class="sync-text" data-k="seek" data-i="${i}">${esc(l.text)}</button>
+      <button class="chip sm" data-k="now" data-i="${i}">Now</button></div>`).join('');
+    $('#sync-next', s.el).textContent = lines[pending]?.text || 'All lines done';
+    $('[data-k="tap"]', s.el).disabled = !times.length || pending >= lines.length;
+    $('[data-k="save"]', s.el).disabled = !times.length;
+  };
+  const playing = () => cur() === t && !eng.paused();
+  const follow = () => {
+    const pos = cur() === t ? eng.time() : -1;
+    const i = pos < 0 ? -1 : activeLine({ synced: true, lines: times.map(x => ({ t: x })) }, pos);
+    const on = list.querySelector('.sync-row.on');
+    if (on && +on.dataset.i === i) return;
+    on?.classList.remove('on');
+    const row = list.querySelector(`.sync-row[data-i="${i}"]`);
+    if (row) { row.classList.add('on'); list.scrollTo({ top: Math.max(0, row.offsetTop - list.clientHeight * 0.35), behavior: 'smooth' }); }
+    $('[data-k="play"]', s.el).innerHTML = icon(playing() ? 'pause' : 'play');
+  };
+  const setAnchor = (i, at) => {
+    history.push([i, anchors.has(i) ? anchors.get(i) : null]);
+    anchors.set(i, Math.round(at * 100) / 100);
+    times = lyricSync.applyAnchors(auto, anchors);
+    pending = Math.min(lines.length, i + 1);
+    draw();
+    follow();
+  };
+  const ensurePlaying = async () => {
+    if (cur() !== t) {
+      startQueue([t.id], 0, null);
+      for (let k = 0; k < 40 && !(cur() === t && eng.duration() > 0); k++) await sleep(100);
+    } else if (eng.paused()) eng.play();
+  };
+
+  s.el.addEventListener('click', async e => {
+    const b = e.target.closest('[data-k]');
+    if (!b || b.disabled) return;
+    const k = b.dataset.k;
+    const i = +b.dataset.i;
+    if (k === 'play') { if (playing()) eng.pause(); else await ensurePlaying(); follow(); }
+    else if (k === 'back') { if (cur() === t) eng.seek(Math.max(0, eng.time() - 5)); }
+    else if (k === 'seek') { pending = i; draw(); await ensurePlaying(); eng.seek(Math.max(0, (times[i] ?? 0) - 1.5)); follow(); }
+    else if (k === 'tap') { if (cur() !== t) await ensurePlaying(); setAnchor(pending, eng.time()); }
+    else if (k === 'now') { if (cur() !== t) await ensurePlaying(); setAnchor(i, eng.time()); }
+    else if (k === 'undo') {
+      const last = history.pop();
+      if (!last) return;
+      if (last[1] == null) anchors.delete(last[0]); else anchors.set(last[0], last[1]);
+      times = lyricSync.applyAnchors(auto, anchors);
+      pending = last[0];
+      draw();
+    } else if (k === 'reset') { anchors.clear(); history.length = 0; times = auto.slice(); pending = 0; draw(); }
+    else if (k === 'save') {
+      stop();
+      const lrc = lyricSync.toLRC(lines, times);
+      if (await saveLyrics(t, lrc)) { t.lyricsSyncedBy = anchors.size ? 'tap' : 'auto'; await db.put('tracks', t); s.close(); toast('Synced lyrics saved'); }
+    }
+  });
+
+  if (!auto) {
+    try {
+      const blob = await db.get('files', t.id);
+      const va = await vocalActivity(blob);
+      auto = lyricSync.autoSync(lines, va, { duration: t.duration || t.an?.dur, intro: t.an?.intro, outro: t.an?.outro });
+      times = auto.slice();
+      status.textContent = 'Rough sync ready. Play the song and tap the big button when each line starts (or “Now” on any line). Lines in between adjust themselves.';
+    } catch (err) {
+      console.warn('Auto-sync failed', err);
+      // Still usable as plain tap-to-sync: spread the lines evenly to start with.
+      const d = t.duration || 180;
+      auto = lines.map((_, i) => Math.round((d * 0.1 + (d * 0.8 * i) / lines.length) * 100) / 100);
+      times = auto.slice();
+      status.textContent = 'Couldn’t analyze the vocals; tap each line as you hear it start.';
+    }
+  }
+  pending = 0;
+  draw();
+  timer = setInterval(follow, 150);
 }
 
 // ---------- automatic synced lyrics ----------
@@ -2617,7 +2796,9 @@ function pickLyrics(t) {
     inp.value = '';
     if (!f) return;
     const data = await saveLyrics(t, await f.text());
-    if (data) toast(data.synced ? 'Synced lyrics added' : 'Lyrics added (not synced)');
+    if (!data) return;
+    if (data.synced) toast('Synced lyrics added');
+    else { toast('Lyrics added. Let’s sync them.'); syncSheet(t); }
   };
   inp.click();
 }
@@ -3069,7 +3250,8 @@ async function importFiles(fileList, extra = {}) {
       await db.put('files', blob, t.id);
       const lrc = lrcByName.get(baseName(f.name));
       const lyricText = lrc ? await lrc.text() : tags.lyrics;
-      if (lyricText && parseLyrics(lyricText)) { await db.put('lyrics', lyricText, t.id); t.hasLyrics = true; lyricsAdded++; }
+      const parsedLyr = lyricText && parseLyrics(lyricText);
+      if (parsedLyr) { await db.put('lyrics', lyricText, t.id); t.hasLyrics = true; t.lyricsSynced = parsedLyr.synced; lyricsAdded++; }
       await db.put('tracks', t);
       S.tracks.set(t.id, t);
       existing.add(`${f.size}|${f.name}`);
@@ -3267,6 +3449,7 @@ function songMenu(tid, pi, fromNP = false) {
     fromNP && { icon: 'mic', label: CFG.karaoke ? 'Turn karaoke off' : 'Karaoke mode', on: CFG.karaoke, badge: CFG.enhanced ? '' : 'Enhanced audio', run: () => { if (!CFG.enhanced) setCfg('enhanced', true); setCfg('karaoke', !CFG.karaoke); toast(CFG.karaoke ? 'Karaoke on: vocals reduced' : 'Karaoke off'); } },
     { icon: 'note', label: t.memory?.text ? 'Edit memory' : 'Add a memory', run: () => memorySheet(t) },
     { icon: 'lyrics', label: t.hasLyrics ? 'Replace lyrics' : 'Add lyrics', run: () => lyricsSheet(t) },
+    t.hasLyrics && { icon: 'timer', label: t.lyricsSynced === true ? 'Adjust lyric timing' : 'Sync lyrics (automatic + tap)', run: () => syncSheet(t) },
     t.hasLyrics && { icon: 'close', label: 'Remove lyrics', run: async () => { await db.del('lyrics', t.id); t.hasLyrics = false; await db.put('tracks', t); resetLyricsIndex(); if (t === cur()) loadLyrics(t); toast('Lyrics removed'); } },
     top.v !== 'album' && { icon: 'album', label: 'Go to album', run: () => navigate('album', albumKey(t)) },
     ...artistsOf(t).slice(0, 3).filter(a => !(top.v === 'artist' && top.id === a)).map(a => ({ icon: 'user', label: `Go to ${a}`, run: () => navigate('artist', a) })),
@@ -3845,11 +4028,35 @@ async function detectTrackLanguage(t) {
  * context: the language of other songs by the same artists, the languages already in the library, and words
  * in the title (including Finglish). Instrumental only when every listened part sounds vocal-free.
  */
+// Languages the model tends to confuse with each other (similar sounds or scripts).
+const LANG_NEIGHBOURS = {
+  fa: ['ar', 'ur', 'ps', 'tg', 'az', 'ku', 'he'], ar: ['fa', 'ur', 'he', 'ps'], ur: ['hi', 'fa', 'ar', 'pa'], hi: ['ur', 'pa'],
+  tr: ['az'], az: ['tr', 'fa'], es: ['pt', 'it', 'ca', 'gl'], pt: ['es', 'gl'], it: ['es'], ru: ['uk', 'be', 'bg'], uk: ['ru', 'be'],
+};
+
+/** The languages you actually listen to: your own choice in Settings, or worked out from your library. */
+function myLanguages() {
+  if (CFG.myLangs?.length) return new Set(CFG.myLangs);
+  const counts = new Map();
+  let n = 0;
+  for (const t of S.tracks.values()) {
+    const l = t.lang;
+    if (!l || l.code === L.INSTRUMENTAL || l.recheck) continue;
+    const trusted = l.src === 'user' || (l.src === 'ai' && l.v === 2 && l.conf >= 0.6) || (l.src === 'text' && l.conf >= 0.6);
+    if (!trusted) continue;
+    counts.set(l.code, (counts.get(l.code) || 0) + 1);
+    n++;
+  }
+  return new Set([...counts].filter(([, c]) => c >= Math.max(2, n * 0.12)).map(([code]) => code));
+}
+
 function decideLanguage(t, r) {
-  // Music scores 0.4–0.6 "no speech" even with vocals, so only call it instrumental when every part is clearly vocal-free.
-  if (r.noSpeechMin > 0.8) return { code: L.INSTRUMENTAL, conf: r.noSpeechMin, alt: [] };
-  // Mostly vocal-free and no language stands out: also instrumental.
-  if (r.noSpeech > 0.75 && r.conf < 0.45) return { code: L.INSTRUMENTAL, conf: r.noSpeech, alt: [r.code] };
+  const text = L.detectFromText(t.title, t.album);
+  const titleSaysLanguage = text && text.code !== 'en' && text.conf >= 0.35; // e.g. Persian script or Finglish words
+  // Music scores 0.4–0.7 "no speech" even with vocals, so instrumental needs every part clearly vocal-free AND no
+  // language standing out (and even more when the title clearly is in a language).
+  if (r.noSpeechMin > (titleSaysLanguage ? 0.95 : 0.88) && r.conf < 0.5) return { code: L.INSTRUMENTAL, conf: r.noSpeechMin, alt: [], v: 2 };
+  if (!titleSaysLanguage && r.noSpeech > 0.92 && r.conf < 0.3) return { code: L.INSTRUMENTAL, conf: r.noSpeech, alt: [r.code], v: 2 };
   const known = [...S.tracks.values()].filter(x => x !== t && x.lang && x.lang.code !== L.INSTRUMENTAL
     && (x.lang.src === 'user' || (x.lang.src === 'ai' && x.lang.conf >= 0.5)));
   const lib = new Map();
@@ -3859,16 +4066,27 @@ function decideLanguage(t, r) {
     lib.set(x.lang.code, (lib.get(x.lang.code) || 0) + 1);
     if (artistsOf(x).some(a => mine.has(a))) byArtist.set(x.lang.code, (byArtist.get(x.lang.code) || 0) + (x.lang.src === 'user' ? 2 : 1));
   }
-  const text = L.detectFromText(t.title, t.album);
+  const pref = myLanguages();
   const scored = r.top.map(({ code, p }) => {
     let s = p;
     s *= 1 + 1.5 * ((lib.get(code) || 0) / Math.max(1, known.length));
     s *= 1 + Math.min(3, byArtist.get(code) || 0) * 0.8;
     if (text && text.conf >= 0.3 && text.code === code) s *= 1 + 3 * text.conf;
-    return { code, s };
+    if (pref.has(code)) s *= 2.2; // a language you listen to
+    return { code, s, p };
   }).sort((a, b) => b.s - a.s);
   const sum = scored.reduce((n, x) => n + x.s, 0) || 1;
-  return { code: scored[0].code, conf: scored[0].s / sum, alt: scored.slice(1, 3).map(x => x.code) };
+  let best = scored[0];
+  const conf = c => c.s / sum;
+  if (pref.size && !pref.has(best.code)) {
+    // A language you don't listen to needs strong evidence. A neighbour you do listen to (Arabic ↔ Persian…) wins
+    // easily; otherwise any of your languages the model heard at least a little.
+    const neighbour = scored.find(x => pref.has(x.code) && (LANG_NEIGHBOURS[best.code] || []).includes(x.code) && x.p >= 0.03);
+    const mine = scored.find(x => pref.has(x.code) && x.p >= 0.06);
+    if (neighbour && conf(best) < 0.92) best = neighbour;
+    else if (mine && conf(best) < 0.8) best = mine;
+  }
+  return { code: best.code, conf: conf(best), alt: scored.filter(x => x !== best).slice(0, 2).map(x => x.code), v: 2 };
 }
 
 /** After a detection pass: unsure songs follow the language their artists confidently sing in. */
@@ -3899,9 +4117,31 @@ function languageConsensus() {
   if (changedAny) D = null;
 }
 
+/**
+ * Older AI labels (before the "your languages" logic) that look doubtful get checked again:
+ * instrumentals, Arabic, low confidence, or a language outside the ones you listen to.
+ */
+function queueLanguageRechecks() {
+  const pref = myLanguages();
+  let n = 0;
+  for (const t of S.tracks.values()) {
+    const l = t.lang;
+    if (!l || l.src !== 'ai') continue;
+    if (l.v === 2 && !(pref.size && !pref.has(l.code) && l.code !== L.INSTRUMENTAL && (l.conf ?? 0) < 0.9)) continue;
+    const doubtful = l.code === L.INSTRUMENTAL || l.code === 'ar' || (l.conf ?? 0) < 0.6 || (pref.size && !pref.has(l.code));
+    if (!doubtful) continue;
+    t.lang = { ...l, src: 'text', recheck: true }; // keeps showing the old guess until re-checked
+    delete t.langFailed;
+    db.put('tracks', t);
+    n++;
+  }
+  return n;
+}
+
 let langCount = 0;
 async function runLang() {
   if (CFG.aiLang !== true || JOBS.lang.running) return;
+  if (queueLanguageRechecks()) D = null;
   JOBS.lang.running = true;
   try {
     await ensureModel();
@@ -3923,7 +4163,7 @@ async function runLang() {
       await db.put('tracks', t);
       try {
         const r = await detectTrackLanguage(t);
-        t.lang = { code: r.code, conf: Math.round(r.conf * 100) / 100, src: 'ai', alt: r.alt };
+        t.lang = { code: r.code, conf: Math.round(r.conf * 100) / 100, src: 'ai', alt: r.alt, v: 2 };
       } catch (e) {
         console.warn('Language detection failed for', t.title, e);
         t.langFailed = true;
@@ -4241,6 +4481,21 @@ const ACTIONS = {
     syncSelection();
   },
   'sel-do': el => selAction(el.dataset.do),
+  'my-langs': () => {
+    const chosen = new Set(CFG.myLangs || [...myLanguages()]);
+    const opts = [...new Set([...chosen, ...L.COMMON_LANGS.filter(c => c !== L.INSTRUMENTAL)])];
+    const s = sheet(`<div class="sheet-title">Languages you listen to</div>
+      <p class="hint" style="text-align:center">Songs are only sorted into other languages when the AI is very sure. Pick the ones your music is in.</p>
+      <div class="chips wrap center">${opts.map(c => `<button class="chip${chosen.has(c) ? ' on' : ''}" data-l="${c}">${esc(L.langName(c))}</button>`).join('')}</div>
+      <div class="pad"><button class="btn-primary" style="width:100%;margin:12px 0 4px" data-save>Save</button>
+      <button class="sheet-item center" data-auto>Work it out automatically</button></div>`);
+    s.el.addEventListener('click', e => {
+      const b = e.target.closest('[data-l]');
+      if (b) { chosen.has(b.dataset.l) ? chosen.delete(b.dataset.l) : chosen.add(b.dataset.l); b.classList.toggle('on'); return; }
+      if (e.target.closest('[data-save]')) { CFG.myLangs = [...chosen]; saveCfg(); s.close(); toast('Saved. Doubtful songs will be checked again.'); runLang(); refresh(); }
+      if (e.target.closest('[data-auto]')) { CFG.myLangs = null; saveCfg(); s.close(); toast('Languages will be worked out from your library'); refresh(); }
+    });
+  },
   'set-theme': el => { CFG.theme = el.dataset.k; saveCfg(); applyTheme(); refresh(); },
   'set-bg': el => { CFG.bg = el.dataset.k; saveCfg(); applyTheme(); refresh(); },
   'open-quick': openQuick,
@@ -4342,6 +4597,7 @@ const ACTIONS = {
   'np-artist': () => { const t = cur(); if (t) navigate('artist', artistOf(t)); },
   'memory-cur': () => { const t = cur(); if (t) memorySheet(t); },
   'np-lyrics': toggleLyricsView,
+  'sync-cur': () => { const t = cur(); if (t) syncSheet(t); },
   'lyrics-add-cur': () => { const t = cur(); if (t) lyricsSheet(t); },
   'eq-sheet': eqSheet,
   'speed-sheet': speedSheet,

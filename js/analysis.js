@@ -51,6 +51,25 @@ export async function decodeMono(blob, sr) {
   return out;
 }
 
+/** Vocal activity over time for lyric syncing: { hop (seconds per value), score: Float32Array }. */
+export async function vocalActivity(blob) {
+  const sr = 16000;
+  let buf = await blob.arrayBuffer();
+  let ab = await new Promise((res, rej) => {
+    const p = decoder(sr).decodeAudioData(buf, res, rej);
+    if (p && p.then) p.then(res, rej);
+  });
+  buf = null;
+  const L = ab.getChannelData(0).slice();
+  const R = (ab.numberOfChannels > 1 ? ab.getChannelData(1) : ab.getChannelData(0)).slice();
+  ab = null;
+  const id = ++seq;
+  return new Promise((resolve, reject) => {
+    pending.set(id, { resolve, reject });
+    getWorker().postMessage({ id, type: 'vocal', L, R, sr }, [L.buffer, R.buffer]);
+  });
+}
+
 /** Sample rate for analysis: plenty for tempo, loudness, silence and the EQ bands; lower for very long tracks. */
 const rateFor = durationSec => (durationSec > 600 ? 11025 : 22050);
 

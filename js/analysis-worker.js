@@ -187,9 +187,79 @@ function analyze(x, sr) {
   };
 }
 
+/**
+ * How "vocal" each 50 ms of the song sounds (for syncing plain lyrics). Vocals are usually mixed in the centre,
+ * sit in the voice range and are tonal (harmonic) rather than noisy, so per frame we combine:
+ *  - centre dominance in 250–3500 Hz: energy of (L+R)/2 vs (L−R)/2
+ *  - tonality of the centre signal in that range (low spectral flatness)
+ *  - loudness of that range relative to the whole song (silence can't be singing)
+ */
+function vocalActivity(L, R, sr) {
+  const N = 1024;
+  const hop = Math.round(sr * 0.05);
+  const fft = makeFFT(N);
+  const win = new Float64Array(N);
+  for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (N - 1));
+  const mr = new Float64Array(N), mi = new Float64Array(N), sr2 = new Float64Array(N), si = new Float64Array(N);
+  const binHz = sr / N;
+  const lo = Math.max(1, Math.floor(250 / binHz));
+  const hi = Math.min(N / 2 - 1, Math.ceil(3500 / binHz));
+  const frames = Math.max(0, Math.floor((L.length - N) / hop));
+  const centre = new Float32Array(frames);
+  const tonal = new Float32Array(frames);
+  const level = new Float32Array(frames);
+  for (let f = 0; f < frames; f++) {
+    const s = f * hop;
+    for (let i = 0; i < N; i++) {
+      const l = L[s + i], r = R[s + i];
+      mr[i] = ((l + r) / 2) * win[i]; mi[i] = 0;
+      sr2[i] = ((l - r) / 2) * win[i]; si[i] = 0;
+    }
+    fft(mr, mi);
+    fft(sr2, si);
+    let em = 0, es = 0, logSum = 0, linSum = 0;
+    for (let k = lo; k <= hi; k++) {
+      const pm = mr[k] * mr[k] + mi[k] * mi[k];
+      em += pm;
+      es += sr2[k] * sr2[k] + si[k] * si[k];
+      const mag = Math.sqrt(pm) + 1e-9;
+      logSum += Math.log(mag);
+      linSum += mag;
+    }
+    const nb = hi - lo + 1;
+    centre[f] = Math.log10(em + 1e-9) - Math.log10(es + 1e-9);
+    tonal[f] = 1 - Math.exp(logSum / nb) / (linSum / nb); // 1 − spectral flatness
+    level[f] = 10 * Math.log10(em / nb + 1e-12);
+  }
+  // Normalise each feature over the song, combine, gate out quiet frames, smooth over ~0.35 s.
+  const z = a => {
+    let m = 0; for (const v of a) m += v; m /= a.length || 1;
+    let sd = 0; for (const v of a) sd += (v - m) * (v - m); sd = Math.sqrt(sd / (a.length || 1)) || 1;
+    return Array.from(a, v => (v - m) / sd);
+  };
+  const zc = z(centre), zt = z(tonal);
+  const sortedLevel = Array.from(level).sort((a, b) => a - b);
+  const median = sortedLevel[Math.floor(sortedLevel.length / 2)] ?? 0;
+  const raw = new Float32Array(frames);
+  for (let f = 0; f < frames; f++) raw[f] = level[f] < median - 18 ? -3 : 0.6 * zc[f] + 0.4 * zt[f];
+  const score = new Float32Array(frames);
+  const w = 3;
+  for (let f = 0; f < frames; f++) {
+    let sum = 0, n = 0;
+    for (let k = Math.max(0, f - w); k <= Math.min(frames - 1, f + w); k++) { sum += raw[k]; n++; }
+    score[f] = sum / n;
+  }
+  return { hop: hop / sr, score };
+}
+
 self.onmessage = e => {
   const { id, pcm, sr } = e.data;
   try {
+    if (e.data.type === 'vocal') {
+      const result = vocalActivity(e.data.L, e.data.R, sr);
+      self.postMessage({ id, result }, [result.score.buffer]);
+      return;
+    }
     self.postMessage({ id, result: analyze(pcm, sr) });
   } catch (err) {
     self.postMessage({ id, error: String(err && err.message || err) });
