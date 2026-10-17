@@ -3566,6 +3566,7 @@ function editSheet(tracks) {
 
 const JOBS = { an: { running: false }, lang: { running: false, done: 0 }, model: { state: 'none', pct: 0, err: '' } };
 
+let anCount = 0;
 async function runAnalysis() {
   if (JOBS.an.running) return;
   JOBS.an.running = true;
@@ -3576,19 +3577,33 @@ async function runAnalysis() {
       updateJobStatus();
       if (!todo.length) break;
       const t = todo[0];
+      // Crash guard: note the attempt before starting. If the app was killed twice while on this song
+      // (e.g. iPhone running out of memory on a huge file), skip it instead of crashing again.
+      t.anTries = (t.anTries || 0) + 1;
+      if (t.anTries > 2) {
+        t.anFailed = true;
+        delete t.anTries;
+        await db.put('tracks', t);
+        continue;
+      }
+      await db.put('tracks', t);
       try {
-        const blob = await db.get('files', t.id);
-        t.an = await analyzeBlob(blob);
+        let blob = await db.get('files', t.id);
+        t.an = await analyzeBlob(blob, t.duration);
+        blob = null;
         if (t.an.dur && !t.duration) t.duration = t.an.dur;
       } catch (e) {
         console.warn('Analysis failed for', t.title, e);
         t.anFailed = true;
       }
+      delete t.anTries;
       if (S.tracks.has(t.id)) await db.put('tracks', t);
       if (t === cur()) applyAudio();
       D = null;
       softRefresh();
-      await sleep(120);
+      // Give the phone time to free the decoded audio before the next song (a longer rest every 8 songs).
+      anCount++;
+      await sleep(anCount % 8 === 0 ? 4000 : 900);
     }
   } finally {
     JOBS.an.running = false;
@@ -3694,6 +3709,7 @@ function languageConsensus() {
   if (changedAny) D = null;
 }
 
+let langCount = 0;
 async function runLang() {
   if (CFG.aiLang !== true || JOBS.lang.running) return;
   JOBS.lang.running = true;
@@ -3706,6 +3722,15 @@ async function runLang() {
       updateJobStatus();
       if (!todo.length) break;
       const t = todo[0];
+      // Same crash guard as the analysis: skip a song the app died on twice.
+      t.langTries = (t.langTries || 0) + 1;
+      if (t.langTries > 2) {
+        t.langFailed = true;
+        delete t.langTries;
+        await db.put('tracks', t);
+        continue;
+      }
+      await db.put('tracks', t);
       try {
         const r = await detectTrackLanguage(t);
         t.lang = { code: r.code, conf: Math.round(r.conf * 100) / 100, src: 'ai', alt: r.alt };
@@ -3713,10 +3738,12 @@ async function runLang() {
         console.warn('Language detection failed for', t.title, e);
         t.langFailed = true;
       }
+      delete t.langTries;
       if (S.tracks.has(t.id)) await db.put('tracks', t);
       D = null;
       softRefresh();
-      await sleep(200);
+      langCount++;
+      await sleep(langCount % 8 === 0 ? 4000 : 1000);
     }
   } catch (e) {
     console.warn('Language AI unavailable', e);

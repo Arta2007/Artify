@@ -128,6 +128,11 @@ function analyze(x, sr) {
     [prev, cur] = [cur, prev];
   }
   const bands = Array.from(bandPow, p => Math.round(db(p / Math.max(1, frames)) * 10) / 10);
+  // Bands above what this sample rate can hold (e.g. 16 kHz when analyzing at 22 kHz) would read as silence;
+  // estimate them from the band below with the usual high-frequency roll-off instead.
+  for (let b = 1; b < 10; b++) {
+    if (BAND_CENTERS[b] / Math.SQRT2 >= (sr / 2) * 0.98) bands[b] = Math.round((bands[b - 1] - 6.5) * 10) / 10;
+  }
   const centroid = centroidW ? centroidSum / centroidW : 0;
 
   // --- tempo from the autocorrelation of the onset (flux) envelope ---
