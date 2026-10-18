@@ -13,6 +13,7 @@ const emit = (type, detail) => (listeners[type] || []).forEach(fn => fn(detail))
 let decks = [];
 let parked = []; // the other pair: plain spares while enhanced audio is live, the routed pair while it's bypassed
 let bypass = false;
+let handback = null; // a smooth return to the enhanced decks in progress
 let active = 0;
 let ctx = null;
 let wantEnhanced = false;
@@ -53,7 +54,7 @@ function makeDeck() {
     el.addEventListener(type, () => {
       if (el.src === SILENT || !el.src || deck.priming) return;
       if (decks[active] !== deck) return; // ignore the outgoing deck during a crossfade
-      if (type === 'pause' && xfade) return;
+      if (type === 'pause' && (xfade || handback)) return;
       emit(type);
     });
   }
@@ -62,7 +63,7 @@ function makeDeck() {
 
 export function init() {
   decks.push(makeDeck(), makeDeck());
-  const away = () => { if (IOS && graph && !bypass) swapPairs(); };
+  const away = () => { cancelHandback(); if (IOS && graph && !bypass) swapPairs(); };
   document.addEventListener('visibilitychange', () => (document.hidden ? away() : comeBack()));
   window.addEventListener('pagehide', away);
 }
@@ -76,11 +77,11 @@ export const hasSource = () => !!cur().url;
 
 /** Must be called synchronously inside a user tap: unlocks both decks (iOS) and builds the audio graph if wanted. */
 export function prime() {
-  if (wantEnhanced && !graph) buildGraph();
+  if (wantEnhanced && !graph) { buildGraph(); mirror(); }
   for (const d of [...decks, ...parked]) {
     if (d.unlocked) continue;
     d.unlocked = true;
-    if (!d.url) {
+    if (!d.el.src || d.el.src === SILENT) {
       d.el.src = SILENT;
       d.el.play().then(() => { if (d.el.src === SILENT) d.el.pause(); }, () => { d.unlocked = false; });
     } else if (d.el.paused) {
@@ -95,24 +96,41 @@ export function prime() {
   comeBack();
 }
 
+// Web Audio plays a little behind the element's position (its processing buffer); plain elements don't.
+const lag = () => ctx?.baseLatency || 0;
+
+/** Points a parked deck at the current song (paused), so a swap only has to seek, not load. */
+function mirrorInto(m, url) {
+  if (m.el.src === url) return;
+  if (m.url) URL.revokeObjectURL(m.url);
+  m.url = null; // the live deck owns the URL
+  m.el.src = url;
+}
+function mirror() {
+  if (IOS && parked.length && cur().url) mirrorInto(parked[active], cur().url);
+}
+
+function seekWhenReady(d, t) {
+  if (d.el.readyState >= 1) d.el.currentTime = t;
+  else d.el.addEventListener('loadedmetadata', () => { d.el.currentTime = t; }, { once: true });
+}
+
 /** Moves the current song (position, play state, level) onto the other pair of decks. */
 function swapPairs() {
   finishXfade();
   const from = cur();
   const playing = !from.el.paused && !from.priming;
+  // Line up what you hear, not the element clocks: the enhanced side runs lag() behind.
+  const t = Math.max(0, from.el.currentTime + (playing ? (bypass ? lag() : -lag()) : 0));
   [decks, parked] = [parked, decks];
   bypass = !bypass;
   const to = cur();
-  if (to.url) URL.revokeObjectURL(to.url);
+  if (from.url) mirrorInto(to, from.url);
   to.url = from.url;
   from.url = null;
   to.level = from.level;
   to.el.playbackRate = rate;
-  if (to.url) {
-    const t = from.el.currentTime;
-    to.el.src = to.url;
-    to.el.addEventListener('loadedmetadata', () => { to.el.currentTime = t; }, { once: true });
-  }
+  if (to.url) seekWhenReady(to, t);
   if (routed()) {
     to.gain.gain.cancelScheduledValues(ctx.currentTime);
     to.gain.gain.value = to.level;
@@ -127,8 +145,65 @@ function swapPairs() {
 
 /** Back on screen: return to the enhanced decks once the audio engine is running again. */
 function comeBack() {
-  if (!bypass || document.hidden) return;
-  ctx.resume().then(() => { if (bypass && !document.hidden && ctx.state === 'running') swapPairs(); }, () => {});
+  if (!bypass || document.hidden || handback) return;
+  ctx.resume().then(() => {
+    if (!bypass || document.hidden || handback || ctx.state !== 'running') return;
+    if (cur().el.paused || cur().priming || !cur().url) swapPairs();
+    else blendBack();
+  }, () => {});
+}
+
+/**
+ * While a song plays: starts the enhanced deck silently, nudges it until it lines up with the plain one,
+ * then fades it in as the plain one stops, so there's no gap or jump.
+ */
+function blendBack() {
+  const from = cur();
+  const to = parked[active];
+  const hb = handback = { to, adj: 0, tries: 0, timer: 0 };
+  mirrorInto(to, from.url);
+  to.el.playbackRate = rate;
+  to.gain.gain.cancelScheduledValues(ctx.currentTime);
+  to.gain.gain.value = 0;
+  parked[1 - active].gain.gain.value = 0;
+  const target = () => from.el.currentTime + lag() + hb.adj;
+  const settle = () => { clearTimeout(hb.timer); hb.timer = setTimeout(check, 120); };
+  const check = () => {
+    if (handback !== hb) return;
+    const drift = to.el.currentTime - lag() - from.el.currentTime;
+    if (Math.abs(drift) > 0.012 && hb.tries++ < 4) {
+      hb.adj -= drift; // a seek stalls briefly: learn by how much and aim ahead next time
+      hb.timer = setTimeout(check, 1000);
+      to.el.addEventListener('seeked', settle, { once: true });
+      to.el.currentTime = target();
+      return;
+    }
+    handback = null;
+    to.el.removeEventListener('seeked', settle);
+    [decks, parked] = [parked, decks];
+    bypass = false;
+    to.url = from.url;
+    from.url = null;
+    to.level = from.level;
+    to.gain.gain.setTargetAtTime(to.level, ctx.currentTime, 0.003);
+    from.el.pause(); // not forwarded: it's parked now
+  };
+  // If iPhone won't run both at once and stops the plain deck, hand over straight away.
+  from.el.addEventListener('pause', () => { if (handback === hb) { hb.tries = 99; check(); } }, { once: true });
+  seekWhenReady(to, target());
+  to.el.addEventListener('playing', settle, { once: true });
+  hb.timer = setTimeout(() => { if (handback === hb) cancelHandback(); }, 3000); // never started: stay plain for now
+  to.el.play().catch(() => { if (handback === hb) cancelHandback(); });
+}
+
+function cancelHandback() {
+  if (!handback) return;
+  const { to, timer } = handback;
+  handback = null;
+  clearTimeout(timer);
+  to.el.pause();
+  to.gain.gain.value = 0;
+  setTimeout(comeBack, 1500);
 }
 
 // ---------- graph ----------
@@ -316,6 +391,7 @@ export function load(blob, { startAt = 0, level = 1, play = true } = {}) {
   finishXfade();
   const d = cur();
   loadInto(d, blob, startAt);
+  mirror();
   d.level = level;
   if (routed()) { d.gain.gain.cancelScheduledValues(ctx.currentTime); d.gain.gain.value = level; }
   else d.el.volume = Math.min(1, level);
@@ -342,7 +418,7 @@ export function pause() {
 export const paused = () => cur().el.paused || !!cur().priming;
 export const time = () => cur().el.currentTime || 0;
 export const duration = () => { const d = cur().el.duration; return isFinite(d) ? d : 0; };
-export function seek(t) { cur().el.currentTime = Math.max(0, t); }
+export function seek(t) { cancelHandback(); cur().el.currentTime = Math.max(0, t); }
 export const isFading = () => !!xfade;
 
 /**
@@ -361,6 +437,7 @@ export function crossfadeTo(blob, { startAt = 0, level = 1, seconds = 6 } = {}) 
     if (!routed()) to.el.volume = Math.min(1, level);
     else { to.gain.gain.cancelScheduledValues(ctx.currentTime); to.gain.gain.value = level; from.gain.gain.value = 0; }
     playEl(to);
+    mirror();
     emit('switched');
     return;
   }
@@ -384,10 +461,12 @@ export function crossfadeTo(blob, { startAt = 0, level = 1, seconds = 6 } = {}) 
   from.el.addEventListener('pause', onOldPause, { once: true });
   xfade = { from, to, onOldPause, timer: setTimeout(finishXfade, seconds * 1000 + 100) };
   playEl(to);
+  mirror();
   emit('switched');
 }
 
 function finishXfade() {
+  cancelHandback();
   if (!xfade) return;
   const { from, to, onOldPause, timer } = xfade;
   xfade = null;
