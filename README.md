@@ -51,7 +51,7 @@ No server, no build step, no accounts. It's plain HTML/CSS/JS.
 - Smart transitions (no fade between consecutive album tracks, fades start where a song naturally fades out) and skip silence: these work in both modes
 - Smart shuffle, playback speed (pitch stays natural), A–B loop, sleep timer, car mode, swipe/double-tap gestures, listening stats
 
-> **Enhanced audio on iPhone:** it routes audio through Safari's audio engine, which on home-screen apps can pause music when the screen locks or you switch apps. If that happens, turn it off; transitions and skip-silence keep working.
+> **Enhanced audio on iPhone:** it routes audio through Safari's audio engine, which iPhone silences while the app isn't on screen. So when you lock the phone or switch apps, Artify hands the song to a plain player and it keeps playing without the equalizer, effects and karaoke; they come back when you return to the app.
 
 ## Put it online (GitHub Pages, free)
 

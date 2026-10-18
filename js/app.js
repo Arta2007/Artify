@@ -1185,7 +1185,7 @@ const VIEWS = {
     return `${topbar('Sound', true)}<div class="pad">
       <div class="box enh-box">
         <div class="set-row" style="border:0;padding:0">${icon('sparkle')}<div><b>Enhanced audio</b><small>Equalizer, real crossfades, volume leveling, karaoke and effects</small></div>${sw('enhanced', enh)}</div>
-        <p class="hint" style="padding:10px 0 0">On iPhone, enhanced audio can make music pause when the screen locks or you switch apps. If that happens, turn it off: songs will still skip silence and change smoothly.</p>
+        <p class="hint" style="padding:10px 0 0">On iPhone, Apple silences enhanced audio while Artify isn’t on screen, so when you lock the phone or switch apps, songs keep playing without the equalizer, effects and karaoke. They come back when you return to Artify.</p>
       </div>
       <div class="group"><h3>Transitions</h3>
         <div class="set-row${dis}">${icon('fx')}<div><b>Crossfade</b><small id="xf-label">${CFG.crossfade ? CFG.crossfade + ' seconds' : 'Off'}${enh ? '' : ' · needs enhanced audio'}</small></div></div>
