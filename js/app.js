@@ -10,7 +10,7 @@ import * as smart from './smart.js';
 import { parseLyrics, activeLine } from './lyrics.js';
 import { writeZip, readZip } from './zip.js';
 
-const VERSION = '2.0.0';
+const VERSION = '2.0.1';
 
 // ---------- helpers ----------
 
